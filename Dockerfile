@@ -8,4 +8,6 @@ RUN pip install --upgrade pip
 
 RUN pip install -r requirements.txt
 
-CMD ["python3", "-m", "chunkhound.api.cli.main"]
+ENTRYPOINT ["python3", "-m", "chunkhound.api.cli.main"]
+
+CMD ["--help"]
