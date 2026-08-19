@@ -10,18 +10,31 @@ pool:
 
 variables:
 
-  AZURE_SUBSCRIPTION_ID: '95ccfd41-64bd-478c-bfe7-9c2efe238b82'
+  # =====================================================
+  # Azure
+  # =====================================================
 
   RESOURCE_GROUP: 'VT-RG'
   STORAGE_ACCOUNT: 'vishalsa007'
   STORAGE_CONTAINER: 'chunkhound-artifacts'
 
+  # =====================================================
+  # Azure Container Registry
+  # =====================================================
+
   ACR_NAME: 'vishalacr2026'
   ACR_LOGIN_SERVER: 'vishalacr2026.azurecr.io'
-
   ACR_REPOSITORY: 'chunkhound-artifact'
 
+  # =====================================================
+  # Artifact
+  # =====================================================
+
   ARTIFACT_DIR: 'artifacts'
+
+  # Build 1 = 0.1
+  # Build 2 = 0.2
+  # Build 3 = 0.3
 
   APP_VERSION: '0.$(Build.BuildId)'
   ARTIFACT_FILE: 'chunkhound-$(Build.BuildId).tar.gz'
@@ -29,21 +42,30 @@ variables:
 
 stages:
 
+# =========================================================
+# CHUNKHOUND BUILD AND PUBLISH
+# =========================================================
+
 - stage: ChunkHoundBuildAndPublish
+
   displayName: 'ChunkHound Build and Publish'
 
   jobs:
 
   - job: BuildAndPublish
+
     displayName: 'Build Artifact and Publish to Azure'
 
     steps:
 
     # =====================================================
-    # CHECKOUT
+    # 1. CHECKOUT
     # =====================================================
 
     - checkout: self
+
+      displayName: 'Checkout GitHub Repository'
+
 
     - bash: |
 
@@ -53,17 +75,27 @@ stages:
         echo "CHECKOUT CHUNKHOUND"
         echo "=========================================="
 
+        echo ""
+        echo "Current commit:"
         git rev-parse HEAD
 
+        echo ""
+        echo "Repository:"
         git remote -v
 
+        echo ""
+        echo "Current branch:"
+        git branch --show-current
+
+        echo ""
+        echo "Repository files:"
         ls -la
 
-      displayName: 'Checkout'
+      displayName: 'Verify Checkout'
 
 
     # =====================================================
-    # PYTHON
+    # 2. VERIFY PYTHON
     # =====================================================
 
     - bash: |
@@ -71,18 +103,26 @@ stages:
         set -e
 
         echo "=========================================="
-        echo "VERIFY PYTHON"
+        echo "VERIFYING PYTHON"
         echo "=========================================="
 
+        echo ""
+        echo "Python:"
         python3 --version
+
+        echo ""
+        echo "Pip:"
         python3 -m pip --version
+
+        echo ""
+        echo "Python location:"
         which python3
 
       displayName: 'Verify Python'
 
 
     # =====================================================
-    # VIRTUAL ENVIRONMENT
+    # 3. CREATE VIRTUAL ENVIRONMENT
     # =====================================================
 
     - bash: |
@@ -90,7 +130,7 @@ stages:
         set -e
 
         echo "=========================================="
-        echo "CREATE VIRTUAL ENVIRONMENT"
+        echo "CREATING VIRTUAL ENVIRONMENT"
         echo "=========================================="
 
         rm -rf venv
@@ -99,16 +139,27 @@ stages:
 
         source venv/bin/activate
 
+        echo ""
+        echo "Python:"
         python --version
+
+        echo ""
+        echo "Pip:"
         pip --version
+
+        echo ""
+        echo "Upgrading pip..."
 
         python -m pip install --upgrade pip
 
-      displayName: 'Create Virtual Environment'
+        echo ""
+        echo "Virtual environment created successfully."
+
+      displayName: 'Create Python Virtual Environment'
 
 
     # =====================================================
-    # DEPENDENCIES
+    # 4. INSTALL DEPENDENCIES
     # =====================================================
 
     - bash: |
@@ -116,32 +167,43 @@ stages:
         set -e
 
         echo "=========================================="
-        echo "INSTALL DEPENDENCIES"
+        echo "INSTALLING DEPENDENCIES"
         echo "=========================================="
 
         source venv/bin/activate
 
         if [ -f requirements.txt ]; then
 
+          echo ""
+          echo "requirements.txt found."
+
           pip install -r requirements.txt
 
         elif [ -f pyproject.toml ]; then
+
+          echo ""
+          echo "pyproject.toml found."
 
           pip install .
 
         else
 
-          echo "ERROR: No requirements.txt or pyproject.toml found."
+          echo ""
+          echo "ERROR:"
+          echo "Neither requirements.txt nor pyproject.toml was found."
 
           exit 1
 
         fi
 
-      displayName: 'Install Dependencies'
+        echo ""
+        echo "Dependencies installed successfully."
+
+      displayName: 'Install Python Dependencies'
 
 
     # =====================================================
-    # CREATE ARTIFACT
+    # 5. PREPARE ARTIFACT
     # =====================================================
 
     - bash: |
@@ -149,20 +211,44 @@ stages:
         set -e
 
         echo "=========================================="
-        echo "CREATE ARTIFACT"
+        echo "PREPARING CHUNKHOUND ARTIFACT"
         echo "=========================================="
+
+        echo ""
+        echo "Application Version:"
+        echo "$(APP_VERSION)"
+
+        echo ""
+        echo "Artifact File:"
+        echo "$(ARTIFACT_FILE)"
+
+        echo ""
+        echo "Cleaning artifact directory..."
 
         rm -rf "$(ARTIFACT_DIR)"
 
         mkdir -p "$(ARTIFACT_DIR)"
 
+        echo ""
+        echo "Checking ChunkHound source..."
+
         if [ ! -d "chunkhound" ]; then
 
-          echo "ERROR: chunkhound directory not found."
+          echo "ERROR: chunkhound directory was not found."
+
+          echo ""
+          echo "Repository contents:"
+
+          find . -maxdepth 2 -type f | sort | head -100
 
           exit 1
 
         fi
+
+        echo "chunkhound directory found."
+
+        echo ""
+        echo "Creating tar.gz artifact..."
 
         tar \
           --exclude='./.git' \
@@ -173,33 +259,41 @@ stages:
           --exclude='*.pyc' \
           -czf "$(ARTIFACT_DIR)/$(ARTIFACT_FILE)" .
 
-        ls -lh "$(ARTIFACT_DIR)"
+        echo ""
+        echo "Artifact created successfully."
 
         echo ""
-        echo "Version:"
-        echo "$(APP_VERSION)"
+        echo "Artifact details:"
+
+        ls -lh "$(ARTIFACT_DIR)/$(ARTIFACT_FILE)"
 
         echo ""
-        echo "Artifact:"
-        echo "$(ARTIFACT_FILE)"
+        echo "Artifact contents:"
 
-      displayName: 'Create Artifact'
+        tar -tzf "$(ARTIFACT_DIR)/$(ARTIFACT_FILE)" | head -50
+
+      displayName: 'Create ChunkHound Artifact'
 
 
     # =====================================================
-    # PUBLISH ARTIFACT TO ADO
+    # 6. PUBLISH ARTIFACT TO AZURE DEVOPS
     # =====================================================
 
     - task: PublishPipelineArtifact@1
+
       displayName: 'Publish Artifact to Azure DevOps'
 
       inputs:
+
         targetPath: '$(ARTIFACT_DIR)'
-        artifact: 'chunkhound'
+
+        artifact: 'chunkhound-artifact'
+
+        publishLocation: 'pipeline'
 
 
     # =====================================================
-    # INSTALL ORAS
+    # 7. VERIFY / INSTALL ORAS
     # =====================================================
 
     - bash: |
@@ -207,23 +301,29 @@ stages:
         set -e
 
         echo "=========================================="
-        echo "VERIFY ORAS"
+        echo "VERIFYING ORAS"
         echo "=========================================="
 
         if command -v oras >/dev/null 2>&1; then
 
-          echo "ORAS already installed."
+          echo ""
+          echo "ORAS is already installed."
 
         else
 
+          echo ""
+          echo "ORAS is not installed."
           echo "Installing ORAS..."
 
-          curl -LO \
-            https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz
+          ORAS_VERSION="1.2.0"
+
+          curl -fL \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
+            -o oras.tar.gz
 
           mkdir -p oras-install
 
-          tar -xzf oras_1.2.0_linux_amd64.tar.gz \
+          tar -xzf oras.tar.gz \
             -C oras-install
 
           sudo install \
@@ -232,29 +332,41 @@ stages:
 
         fi
 
+        echo ""
+        echo "ORAS version:"
+
         oras version
 
       displayName: 'Install and Verify ORAS'
 
 
     # =====================================================
-    # AZURE OPERATIONS
+    # 8. AZURE OPERATIONS
     # =====================================================
 
     - task: AzureCLI@2
+
       displayName: 'Azure Blob and ACR Operations'
 
       inputs:
 
+        # IMPORTANT:
+        # This MUST exactly match your Azure DevOps
+        # Service Connection name.
+
         azureSubscription: 'batch13-connection'
 
         scriptType: 'bash'
+
         scriptLocation: 'inlineScript'
+
+        addSpnToEnvironment: false
 
         inlineScript: |
 
           set -e
 
+          echo ""
           echo "=========================================="
           echo "AZURE ACCOUNT"
           echo "=========================================="
@@ -265,7 +377,7 @@ stages:
 
 
           # =================================================
-          # RESOURCE GROUP
+          # 8.1 VERIFY RESOURCE GROUP
           # =================================================
 
           echo ""
@@ -279,7 +391,7 @@ stages:
 
 
           # =================================================
-          # STORAGE ACCOUNT
+          # 8.2 VERIFY STORAGE ACCOUNT
           # =================================================
 
           echo ""
@@ -294,7 +406,7 @@ stages:
 
 
           # =================================================
-          # STORAGE CONTAINER
+          # 8.3 VERIFY STORAGE CONTAINER
           # =================================================
 
           echo ""
@@ -308,15 +420,26 @@ stages:
             --name "$(STORAGE_CONTAINER)" \
             --output table
 
+          echo ""
+          echo "Storage container verified successfully."
+
 
           # =================================================
-          # BLOB UPLOAD
+          # 8.4 UPLOAD VERSIONED ARTIFACT
           # =================================================
 
           echo ""
           echo "=========================================="
-          echo "UPLOAD TO AZURE BLOB"
+          echo "UPLOAD VERSIONED ARTIFACT"
           echo "=========================================="
+
+          echo ""
+          echo "Version:"
+          echo "$(APP_VERSION)"
+
+          echo ""
+          echo "Artifact:"
+          echo "$(ARTIFACT_FILE)"
 
           az storage blob upload \
             --auth-mode login \
@@ -326,6 +449,18 @@ stages:
             --file "$(ARTIFACT_DIR)/$(ARTIFACT_FILE)" \
             --overwrite true
 
+          echo ""
+          echo "Versioned artifact uploaded successfully."
+
+
+          # =================================================
+          # 8.5 UPLOAD LATEST ARTIFACT
+          # =================================================
+
+          echo ""
+          echo "=========================================="
+          echo "UPLOAD LATEST ARTIFACT"
+          echo "=========================================="
 
           az storage blob upload \
             --auth-mode login \
@@ -335,9 +470,12 @@ stages:
             --file "$(ARTIFACT_DIR)/$(ARTIFACT_FILE)" \
             --overwrite true
 
+          echo ""
+          echo "Latest artifact uploaded successfully."
+
 
           # =================================================
-          # VERIFY BLOB
+          # 8.6 VERIFY BLOB
           # =================================================
 
           echo ""
@@ -352,9 +490,12 @@ stages:
             --name "chunkhound/$(APP_VERSION)/$(ARTIFACT_FILE)" \
             --output table
 
+          echo ""
+          echo "Blob artifact verified successfully."
+
 
           # =================================================
-          # ACR
+          # 8.7 VERIFY ACR
           # =================================================
 
           echo ""
@@ -367,9 +508,12 @@ stages:
             --resource-group "$(RESOURCE_GROUP)" \
             --output table
 
+          echo ""
+          echo "ACR verified successfully."
+
 
           # =================================================
-          # ACR LOGIN
+          # 8.8 LOGIN TO ACR
           # =================================================
 
           echo ""
@@ -380,9 +524,12 @@ stages:
           az acr login \
             --name "$(ACR_NAME)"
 
+          echo ""
+          echo "ACR login successful."
+
 
           # =================================================
-          # ORAS PUSH VERSION
+          # 8.9 ORAS PUSH VERSION
           # =================================================
 
           echo ""
@@ -394,9 +541,12 @@ stages:
             "$(ACR_LOGIN_SERVER)/$(ACR_REPOSITORY):$(APP_VERSION)" \
             "$(ARTIFACT_DIR)/$(ARTIFACT_FILE):application/gzip"
 
+          echo ""
+          echo "Versioned ORAS artifact pushed successfully."
+
 
           # =================================================
-          # ORAS PUSH LATEST
+          # 8.10 ORAS PUSH LATEST
           # =================================================
 
           echo ""
@@ -408,14 +558,17 @@ stages:
             "$(ACR_LOGIN_SERVER)/$(ACR_REPOSITORY):latest" \
             "$(ARTIFACT_DIR)/$(ARTIFACT_FILE):application/gzip"
 
+          echo ""
+          echo "Latest ORAS artifact pushed successfully."
+
 
           # =================================================
-          # VERIFY ACR
+          # 8.11 VERIFY ACR REPOSITORY
           # =================================================
 
           echo ""
           echo "=========================================="
-          echo "VERIFY ACR ARTIFACT"
+          echo "VERIFY ACR REPOSITORY"
           echo "=========================================="
 
           az acr repository show \
@@ -424,8 +577,14 @@ stages:
             --output table
 
 
+          # =================================================
+          # 8.12 VERIFY ACR TAGS
+          # =================================================
+
           echo ""
-          echo "ACR TAGS:"
+          echo "=========================================="
+          echo "VERIFY ACR TAGS"
+          echo "=========================================="
 
           az acr repository show-tags \
             --name "$(ACR_NAME)" \
@@ -439,7 +598,7 @@ stages:
 
           echo ""
           echo "=========================================="
-          echo " CHUNKHOUND PIPELINE SUCCESS"
+          echo "     CHUNKHOUND PIPELINE SUCCESS"
           echo "=========================================="
 
           echo ""
@@ -455,8 +614,24 @@ stages:
           echo "$(ARTIFACT_FILE)"
 
           echo ""
+          echo "Azure Resource Group:"
+          echo "$(RESOURCE_GROUP)"
+
+          echo ""
+          echo "Storage Account:"
+          echo "$(STORAGE_ACCOUNT)"
+
+          echo ""
+          echo "Storage Container:"
+          echo "$(STORAGE_CONTAINER)"
+
+          echo ""
           echo "Blob:"
           echo "chunkhound/$(APP_VERSION)/$(ARTIFACT_FILE)"
+
+          echo ""
+          echo "Latest Blob:"
+          echo "chunkhound/latest/$(ARTIFACT_FILE)"
 
           echo ""
           echo "ACR:"
@@ -467,8 +642,14 @@ stages:
           echo "$(ACR_REPOSITORY)"
 
           echo ""
-          echo "ACR Tag:"
+          echo "ACR Version:"
           echo "$(APP_VERSION)"
 
           echo ""
+          echo "ACR Latest:"
+          echo "latest"
+
+          echo ""
+          echo "=========================================="
+          echo "          PIPELINE COMPLETED"
           echo "=========================================="
