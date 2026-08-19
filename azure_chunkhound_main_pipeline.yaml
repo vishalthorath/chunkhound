@@ -1,7 +1,7 @@
 trigger: none
 
 pool:
-  name: batch13-pool
+  name: 'batch13-pool'
 
 variables:
   azureServiceConnection: 'batch13-connection'
@@ -20,13 +20,16 @@ stages:
     steps:
 
     - checkout: self
+      displayName: 'Checkout Repository'
 
     - task: AzureCLI@2
-      displayName: 'Verify Azure Subscription'
+      displayName: 'Verify Azure Subscription and ACR'
+
       inputs:
         azureSubscription: '$(azureServiceConnection)'
         scriptType: 'ps'
         scriptLocation: 'inlineScript'
+
         inlineScript: |
 
           Write-Host "=========================================="
@@ -36,6 +39,11 @@ stages:
           az account show `
             --query "{Name:name, SubscriptionId:id, TenantId:tenantId}" `
             -o table
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "ERROR: Azure authentication failed."
+              exit 1
+          }
 
           Write-Host ""
           Write-Host "=========================================="
@@ -56,7 +64,7 @@ stages:
 
           if ($LASTEXITCODE -ne 0) {
               Write-Host ""
-              Write-Host "ERROR: Cannot access vishalacr2026"
+              Write-Host "ERROR: Cannot access $(acrName)"
               exit 1
           }
 
