@@ -1,22 +1,43 @@
 trigger: none
 
 pool:
-  name: batch13-pool
+  name: 'batch13-pool'
 
 stages:
+
 - stage: Test
-  displayName: 'Test Agent'
+  displayName: 'Test Job'
 
   jobs:
-  - job: TestJob
-    displayName: 'Test Job'
+
+  - job: TestAgent
+    displayName: 'Test Agent'
 
     steps:
 
-    - script: |
-        echo "======================================"
-        echo "HELLO FROM AZURE DEVOPS"
-        echo "======================================"
-        echo "Agent: $(Agent.Name)"
-        echo "OS: $(Agent.OS)"
-      displayName: 'Test Agent'
+    - checkout: self
+      displayName: 'Checkout Repository'
+
+    - powershell: |
+
+        Write-Host "=========================================="
+        Write-Host "AGENT TEST SUCCESSFUL"
+        Write-Host "=========================================="
+
+        Write-Host ""
+        Write-Host "Computer:"
+        hostname
+
+        Write-Host ""
+        Write-Host "User:"
+        whoami
+
+        Write-Host ""
+        Write-Host "PowerShell:"
+        `$PSVersionTable.PSVersion
+
+        Write-Host ""
+        Write-Host "Azure CLI:"
+        az version
+
+      displayName: 'Test Windows Agent'
