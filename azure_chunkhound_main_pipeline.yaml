@@ -10,7 +10,7 @@ variables:
   # ==============================
   # Azure
   # ==============================
-  azureServiceConnection: 'Azure subscription 1'
+  azureServiceConnection: 'batch13-connection'
 
   # ==============================
   # Azure Container Registry
