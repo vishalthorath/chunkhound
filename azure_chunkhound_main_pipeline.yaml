@@ -246,7 +246,7 @@ stages:
 
       inputs:
 
-        azureSubscription: 'chunkhound-azure-connection'
+        azureSubscription: 'batch13-connection'
 
         scriptType: 'bash'
         scriptLocation: 'inlineScript'
