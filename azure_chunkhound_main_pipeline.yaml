@@ -1,452 +1,26 @@
-trigger:
-  branches:
-    include:
-      - main
+trigger: none
 
 pool:
   name: batch13-pool
 
 variables:
-  # ============================================================
-  # Azure
-  # ============================================================
   azureServiceConnection: 'batch13-connection'
-
-  # ============================================================
-  # Azure Container Registry
-  # ============================================================
   acrName: 'vishalacr2026'
-  acrLoginServer: 'vishalacr2026.azurecr.io'
-
-  # ============================================================
-  # Application
-  # ============================================================
-  artifactName: 'chunkhound'
-
-  # ============================================================
-  # Python
-  # ============================================================
-  pythonCommand: 'python'
-
 
 stages:
 
-# ============================================================
-# STAGE 1 - VERIFY AGENT AND AZURE SUBSCRIPTION
-# ============================================================
 - stage: Verify
-  displayName: 'Verify Agent and Azure Subscription'
+  displayName: 'Verify Azure and ACR'
 
   jobs:
-  - job: VerifyEnvironment
-    displayName: 'Verify Environment'
+
+  - job: VerifyAzure
+    displayName: 'Verify Azure Service Connection'
 
     steps:
 
     - checkout: self
 
-    # --------------------------------------------------------
-    # Verify Windows Agent
-    # --------------------------------------------------------
-    - powershell: |
-
-        Write-Host "======================================"
-        Write-Host "Agent Information"
-        Write-Host "======================================"
-
-        Write-Host "Agent Name: $(Agent.Name)"
-        Write-Host "Agent OS: $(Agent.OS)"
-        Write-Host "Agent Version: $(Agent.Version)"
-
-        Write-Host ""
-        Write-Host "======================================"
-        Write-Host "Working Directory"
-        Write-Host "======================================"
-
-        Get-Location
-
-        Write-Host ""
-        Write-Host "======================================"
-        Write-Host "Git Version"
-        Write-Host "======================================"
-
-        git --version
-
-        Write-Host ""
-        Write-Host "======================================"
-        Write-Host "Python Version"
-        Write-Host "======================================"
-
-        python --version
-
-      displayName: 'Verify Windows Agent'
-
-
-    # --------------------------------------------------------
-    # Verify Azure Subscription
-    # --------------------------------------------------------
-    - task: AzureCLI@2
-      displayName: 'Verify New Azure Subscription'
-      inputs:
-        azureSubscription: '$(azureServiceConnection)'
-        scriptType: 'ps'
-        scriptLocation: 'inlineScript'
-        inlineScript: |
-
-          Write-Host "======================================"
-          Write-Host "Azure Account"
-          Write-Host "======================================"
-
-          az account show `
-            --query "{Name:name, SubscriptionId:id, TenantId:tenantId}" `
-            -o table
-
-          Write-Host ""
-          Write-Host "Azure subscription verification completed successfully."
-
-
-# ============================================================
-# STAGE 2 - BUILD PYTHON ARTIFACT
-# ============================================================
-- stage: Build
-  displayName: 'Build Python Artifact'
-
-  dependsOn: Verify
-
-  jobs:
-  - job: BuildArtifact
-    displayName: 'Build ChunkHound Artifact'
-
-    steps:
-
-    - checkout: self
-
-    # --------------------------------------------------------
-    # Verify Python
-    # --------------------------------------------------------
-    - powershell: |
-
-        Write-Host "======================================"
-        Write-Host "Python Environment"
-        Write-Host "======================================"
-
-        python --version
-        python -m pip --version
-
-      displayName: 'Verify Python'
-
-
-    # --------------------------------------------------------
-    # Upgrade Build Tools
-    # --------------------------------------------------------
-    - powershell: |
-
-        Write-Host "======================================"
-        Write-Host "Installing Build Tools"
-        Write-Host "======================================"
-
-        python -m pip install --upgrade pip
-        python -m pip install build
-
-      displayName: 'Install Python Build Tools'
-
-
-    # --------------------------------------------------------
-    # Build Artifact
-    # --------------------------------------------------------
-    - powershell: |
-
-        Write-Host "======================================"
-        Write-Host "Building ChunkHound Artifact"
-        Write-Host "======================================"
-
-        if (Test-Path "dist") {
-          Remove-Item "dist" -Recurse -Force
-        }
-
-        if (Test-Path "build") {
-          Remove-Item "build" -Recurse -Force
-        }
-
-        Get-ChildItem
-
-        python -m build
-
-        if ($LASTEXITCODE -ne 0) {
-          Write-Error "Python artifact build failed."
-          exit 1
-        }
-
-        Write-Host ""
-        Write-Host "======================================"
-        Write-Host "Generated Artifacts"
-        Write-Host "======================================"
-
-        Get-ChildItem dist
-
-      displayName: 'Build ChunkHound Artifact'
-
-
-    # --------------------------------------------------------
-    # Publish Artifact to Azure DevOps
-    # --------------------------------------------------------
-    - task: PublishPipelineArtifact@1
-      displayName: 'Publish Build Artifact'
-      inputs:
-        targetPath: '$(Build.SourcesDirectory)\dist'
-        artifact: '$(artifactName)'
-        publishLocation: 'pipeline'
-
-
-# ============================================================
-# STAGE 3 - INSTALL ORAS
-# ============================================================
-- stage: InstallORAS
-  displayName: 'Install ORAS'
-
-  dependsOn: Build
-
-  jobs:
-  - job: InstallORAS
-    displayName: 'Install ORAS CLI'
-
-    steps:
-
-    - powershell: |
-
-        Write-Host "======================================"
-        Write-Host "Checking ORAS"
-        Write-Host "======================================"
-
-        $oras = Get-Command oras -ErrorAction SilentlyContinue
-
-        if ($oras) {
-
-          Write-Host "ORAS is already installed."
-          oras version
-
-        }
-        else {
-
-          Write-Host "ORAS is not installed."
-          Write-Host "Downloading ORAS..."
-
-          $orasVersion = "1.3.0"
-          $orasUrl = "https://github.com/oras-project/oras/releases/download/v$orasVersion/oras_$($orasVersion)_windows_amd64.zip"
-
-          $zipPath = "$(Agent.TempDirectory)\oras.zip"
-          $orasDirectory = "$(Agent.TempDirectory)\oras"
-
-          Invoke-WebRequest `
-            -Uri $orasUrl `
-            -OutFile $zipPath
-
-          if (Test-Path $orasDirectory) {
-            Remove-Item $orasDirectory -Recurse -Force
-          }
-
-          New-Item `
-            -ItemType Directory `
-            -Path $orasDirectory `
-            -Force | Out-Null
-
-          Expand-Archive `
-            -Path $zipPath `
-            -DestinationPath $orasDirectory `
-            -Force
-
-          $orasExe = Join-Path $orasDirectory "oras.exe"
-
-          if (-not (Test-Path $orasExe)) {
-            Write-Error "ORAS executable was not found."
-            exit 1
-          }
-
-          Write-Host "ORAS installed successfully."
-
-          & $orasExe version
-
-          Write-Host ""
-          Write-Host "Adding ORAS to PATH..."
-
-          Write-Host "##vso[task.prependpath]$orasDirectory"
-        }
-
-      displayName: 'Install ORAS'
-
-
-# ============================================================
-# STAGE 4 - LOGIN TO ACR AND PUSH ARTIFACT
-# ============================================================
-- stage: PushArtifact
-  displayName: 'Push Artifact to ACR'
-
-  dependsOn:
-    - Build
-    - InstallORAS
-
-  jobs:
-  - job: PushArtifact
-    displayName: 'Push ChunkHound Artifact to ACR'
-
-    steps:
-
-    # --------------------------------------------------------
-    # Download Pipeline Artifact
-    # --------------------------------------------------------
-    - task: DownloadPipelineArtifact@2
-      displayName: 'Download Build Artifact'
-      inputs:
-        artifact: '$(artifactName)'
-        path: '$(Pipeline.Workspace)\$(artifactName)'
-
-
-    # --------------------------------------------------------
-    # Verify Artifact
-    # --------------------------------------------------------
-    - powershell: |
-
-        Write-Host "======================================"
-        Write-Host "Downloaded Artifact"
-        Write-Host "======================================"
-
-        $artifactPath = "$(Pipeline.Workspace)\$(artifactName)"
-
-        Get-ChildItem `
-          -Path $artifactPath `
-          -Recurse
-
-      displayName: 'Verify Build Artifact'
-
-
-    # --------------------------------------------------------
-    # Azure Login
-    # --------------------------------------------------------
-    - task: AzureCLI@2
-      displayName: 'Login to New Azure Subscription'
-      inputs:
-        azureSubscription: '$(azureServiceConnection)'
-        scriptType: 'ps'
-        scriptLocation: 'inlineScript'
-        inlineScript: |
-
-          Write-Host "======================================"
-          Write-Host "Azure Subscription"
-          Write-Host "======================================"
-
-          az account show `
-            --query "{Name:name, SubscriptionId:id, TenantId:tenantId}" `
-            -o table
-
-          Write-Host ""
-          Write-Host "Azure login successful."
-
-
-    # --------------------------------------------------------
-    # Login to ACR using ORAS
-    # --------------------------------------------------------
-    - powershell: |
-
-        Write-Host "======================================"
-        Write-Host "ORAS ACR Login"
-        Write-Host "======================================"
-
-        $acrToken = az acr login `
-          --name "$(acrName)" `
-          --expose-token `
-          --output tsv `
-          --query accessToken
-
-        if (-not $acrToken) {
-          Write-Error "Failed to obtain ACR access token."
-          exit 1
-        }
-
-        $acrToken | oras login `
-          "$(acrLoginServer)" `
-          --username "00000000-0000-0000-0000-000000000000" `
-          --password-stdin
-
-        if ($LASTEXITCODE -ne 0) {
-          Write-Error "ORAS login to ACR failed."
-          exit 1
-        }
-
-        Write-Host ""
-        Write-Host "ORAS successfully authenticated to ACR."
-
-      displayName: 'Login to ACR with ORAS'
-
-
-    # --------------------------------------------------------
-    # Push Artifact as OCI Artifact
-    # --------------------------------------------------------
-    - powershell: |
-
-        Write-Host "======================================"
-        Write-Host "Pushing Artifact to ACR"
-        Write-Host "======================================"
-
-        $artifactPath = "$(Pipeline.Workspace)\$(artifactName)"
-
-        $files = Get-ChildItem `
-          -Path $artifactPath `
-          -File
-
-        if ($files.Count -eq 0) {
-          Write-Error "No build artifacts were found."
-          exit 1
-        }
-
-        foreach ($file in $files) {
-
-          Write-Host ""
-          Write-Host "Pushing artifact:"
-          Write-Host $file.FullName
-
-          $target = "$(acrLoginServer)/$(artifactName):$(Build.BuildNumber)"
-
-          oras push `
-            $target `
-            "$($file.FullName):application/octet-stream"
-
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to push artifact to ACR."
-            exit 1
-          }
-        }
-
-        Write-Host ""
-        Write-Host "======================================"
-        Write-Host "Artifact pushed successfully"
-        Write-Host "======================================"
-
-        Write-Host "Repository:"
-        Write-Host "$(acrLoginServer)/$(artifactName)"
-
-        Write-Host "Tag:"
-        Write-Host "$(Build.BuildNumber)"
-
-      displayName: 'Push Artifact to ACR'
-
-
-# ============================================================
-# STAGE 5 - VERIFY ARTIFACT IN ACR
-# ============================================================
-- stage: VerifyACR
-  displayName: 'Verify Artifact in ACR'
-
-  dependsOn: PushArtifact
-
-  jobs:
-  - job: VerifyArtifact
-    displayName: 'Verify ACR Artifact'
-
-    steps:
-
-    # --------------------------------------------------------
-    # Azure Login
-    # --------------------------------------------------------
     - task: AzureCLI@2
       displayName: 'Verify Azure Subscription'
       inputs:
@@ -455,41 +29,38 @@ stages:
         scriptLocation: 'inlineScript'
         inlineScript: |
 
-          Write-Host "======================================"
-          Write-Host "Azure Subscription"
-          Write-Host "======================================"
+          Write-Host "=========================================="
+          Write-Host "AZURE SUBSCRIPTION"
+          Write-Host "=========================================="
 
           az account show `
             --query "{Name:name, SubscriptionId:id, TenantId:tenantId}" `
             -o table
 
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "EXPECTED SUBSCRIPTION"
+          Write-Host "=========================================="
 
-    # --------------------------------------------------------
-    # Verify OCI Artifact
-    # --------------------------------------------------------
-    - powershell: |
+          Write-Host "95ccfd41-64bd-478c-bfe7-9c2efe238b82"
 
-        Write-Host "======================================"
-        Write-Host "Verifying Artifact in ACR"
-        Write-Host "======================================"
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "CHECKING ACR"
+          Write-Host "=========================================="
 
-        oras manifest fetch `
-          "$(acrLoginServer)/$(artifactName):$(Build.BuildNumber)"
+          az acr show `
+            --name "$(acrName)" `
+            --query "{Name:name, LoginServer:loginServer, ResourceGroup:resourceGroup, Subscription:id}" `
+            -o table
 
-        if ($LASTEXITCODE -ne 0) {
-          Write-Error "Artifact verification failed."
-          exit 1
-        }
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host ""
+              Write-Host "ERROR: Cannot access vishalacr2026"
+              exit 1
+          }
 
-        Write-Host ""
-        Write-Host "======================================"
-        Write-Host "Artifact Verification Successful"
-        Write-Host "======================================"
-
-        Write-Host "Repository:"
-        Write-Host "$(acrLoginServer)/$(artifactName)"
-
-        Write-Host "Tag:"
-        Write-Host "$(Build.BuildNumber)"
-
-      displayName: 'Verify Artifact in ACR'
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "ACR ACCESS SUCCESSFUL"
+          Write-Host "=========================================="
