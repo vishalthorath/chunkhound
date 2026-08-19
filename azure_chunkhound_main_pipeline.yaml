@@ -1,0 +1,474 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr: none
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+
+  AZURE_SUBSCRIPTION_ID: '95ccfd41-64bd-478c-bfe7-9c2efe238b82'
+
+  RESOURCE_GROUP: 'VT-RG'
+  STORAGE_ACCOUNT: 'vishalsa007'
+  STORAGE_CONTAINER: 'chunkhound-artifacts'
+
+  ACR_NAME: 'vishalacr2026'
+  ACR_LOGIN_SERVER: 'vishalacr2026.azurecr.io'
+
+  ACR_REPOSITORY: 'chunkhound-artifact'
+
+  ARTIFACT_DIR: 'artifacts'
+
+  APP_VERSION: '0.$(Build.BuildId)'
+  ARTIFACT_FILE: 'chunkhound-$(Build.BuildId).tar.gz'
+
+
+stages:
+
+- stage: ChunkHoundBuildAndPublish
+  displayName: 'ChunkHound Build and Publish'
+
+  jobs:
+
+  - job: BuildAndPublish
+    displayName: 'Build Artifact and Publish to Azure'
+
+    steps:
+
+    # =====================================================
+    # CHECKOUT
+    # =====================================================
+
+    - checkout: self
+
+    - bash: |
+
+        set -e
+
+        echo "=========================================="
+        echo "CHECKOUT CHUNKHOUND"
+        echo "=========================================="
+
+        git rev-parse HEAD
+
+        git remote -v
+
+        ls -la
+
+      displayName: 'Checkout'
+
+
+    # =====================================================
+    # PYTHON
+    # =====================================================
+
+    - bash: |
+
+        set -e
+
+        echo "=========================================="
+        echo "VERIFY PYTHON"
+        echo "=========================================="
+
+        python3 --version
+        python3 -m pip --version
+        which python3
+
+      displayName: 'Verify Python'
+
+
+    # =====================================================
+    # VIRTUAL ENVIRONMENT
+    # =====================================================
+
+    - bash: |
+
+        set -e
+
+        echo "=========================================="
+        echo "CREATE VIRTUAL ENVIRONMENT"
+        echo "=========================================="
+
+        rm -rf venv
+
+        python3 -m venv venv
+
+        source venv/bin/activate
+
+        python --version
+        pip --version
+
+        python -m pip install --upgrade pip
+
+      displayName: 'Create Virtual Environment'
+
+
+    # =====================================================
+    # DEPENDENCIES
+    # =====================================================
+
+    - bash: |
+
+        set -e
+
+        echo "=========================================="
+        echo "INSTALL DEPENDENCIES"
+        echo "=========================================="
+
+        source venv/bin/activate
+
+        if [ -f requirements.txt ]; then
+
+          pip install -r requirements.txt
+
+        elif [ -f pyproject.toml ]; then
+
+          pip install .
+
+        else
+
+          echo "ERROR: No requirements.txt or pyproject.toml found."
+
+          exit 1
+
+        fi
+
+      displayName: 'Install Dependencies'
+
+
+    # =====================================================
+    # CREATE ARTIFACT
+    # =====================================================
+
+    - bash: |
+
+        set -e
+
+        echo "=========================================="
+        echo "CREATE ARTIFACT"
+        echo "=========================================="
+
+        rm -rf "$(ARTIFACT_DIR)"
+
+        mkdir -p "$(ARTIFACT_DIR)"
+
+        if [ ! -d "chunkhound" ]; then
+
+          echo "ERROR: chunkhound directory not found."
+
+          exit 1
+
+        fi
+
+        tar \
+          --exclude='./.git' \
+          --exclude='./venv' \
+          --exclude='./artifacts' \
+          --exclude='./__pycache__' \
+          --exclude='*/__pycache__' \
+          --exclude='*.pyc' \
+          -czf "$(ARTIFACT_DIR)/$(ARTIFACT_FILE)" .
+
+        ls -lh "$(ARTIFACT_DIR)"
+
+        echo ""
+        echo "Version:"
+        echo "$(APP_VERSION)"
+
+        echo ""
+        echo "Artifact:"
+        echo "$(ARTIFACT_FILE)"
+
+      displayName: 'Create Artifact'
+
+
+    # =====================================================
+    # PUBLISH ARTIFACT TO ADO
+    # =====================================================
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish Artifact to Azure DevOps'
+
+      inputs:
+        targetPath: '$(ARTIFACT_DIR)'
+        artifact: 'chunkhound'
+
+
+    # =====================================================
+    # INSTALL ORAS
+    # =====================================================
+
+    - bash: |
+
+        set -e
+
+        echo "=========================================="
+        echo "VERIFY ORAS"
+        echo "=========================================="
+
+        if command -v oras >/dev/null 2>&1; then
+
+          echo "ORAS already installed."
+
+        else
+
+          echo "Installing ORAS..."
+
+          curl -LO \
+            https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz
+
+          mkdir -p oras-install
+
+          tar -xzf oras_1.2.0_linux_amd64.tar.gz \
+            -C oras-install
+
+          sudo install \
+            oras-install/oras \
+            /usr/local/bin/oras
+
+        fi
+
+        oras version
+
+      displayName: 'Install and Verify ORAS'
+
+
+    # =====================================================
+    # AZURE OPERATIONS
+    # =====================================================
+
+    - task: AzureCLI@2
+      displayName: 'Azure Blob and ACR Operations'
+
+      inputs:
+
+        azureSubscription: 'chunkhound-azure-connection'
+
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+
+        inlineScript: |
+
+          set -e
+
+          echo "=========================================="
+          echo "AZURE ACCOUNT"
+          echo "=========================================="
+
+          az account show \
+            --query "{Subscription:name, SubscriptionId:id, TenantId:tenantId}" \
+            --output table
+
+
+          # =================================================
+          # RESOURCE GROUP
+          # =================================================
+
+          echo ""
+          echo "=========================================="
+          echo "VERIFY RESOURCE GROUP"
+          echo "=========================================="
+
+          az group show \
+            --name "$(RESOURCE_GROUP)" \
+            --output table
+
+
+          # =================================================
+          # STORAGE ACCOUNT
+          # =================================================
+
+          echo ""
+          echo "=========================================="
+          echo "VERIFY STORAGE ACCOUNT"
+          echo "=========================================="
+
+          az storage account show \
+            --name "$(STORAGE_ACCOUNT)" \
+            --resource-group "$(RESOURCE_GROUP)" \
+            --output table
+
+
+          # =================================================
+          # STORAGE CONTAINER
+          # =================================================
+
+          echo ""
+          echo "=========================================="
+          echo "VERIFY STORAGE CONTAINER"
+          echo "=========================================="
+
+          az storage container show \
+            --auth-mode login \
+            --account-name "$(STORAGE_ACCOUNT)" \
+            --name "$(STORAGE_CONTAINER)" \
+            --output table
+
+
+          # =================================================
+          # BLOB UPLOAD
+          # =================================================
+
+          echo ""
+          echo "=========================================="
+          echo "UPLOAD TO AZURE BLOB"
+          echo "=========================================="
+
+          az storage blob upload \
+            --auth-mode login \
+            --account-name "$(STORAGE_ACCOUNT)" \
+            --container-name "$(STORAGE_CONTAINER)" \
+            --name "chunkhound/$(APP_VERSION)/$(ARTIFACT_FILE)" \
+            --file "$(ARTIFACT_DIR)/$(ARTIFACT_FILE)" \
+            --overwrite true
+
+
+          az storage blob upload \
+            --auth-mode login \
+            --account-name "$(STORAGE_ACCOUNT)" \
+            --container-name "$(STORAGE_CONTAINER)" \
+            --name "chunkhound/latest/$(ARTIFACT_FILE)" \
+            --file "$(ARTIFACT_DIR)/$(ARTIFACT_FILE)" \
+            --overwrite true
+
+
+          # =================================================
+          # VERIFY BLOB
+          # =================================================
+
+          echo ""
+          echo "=========================================="
+          echo "VERIFY BLOB"
+          echo "=========================================="
+
+          az storage blob show \
+            --auth-mode login \
+            --account-name "$(STORAGE_ACCOUNT)" \
+            --container-name "$(STORAGE_CONTAINER)" \
+            --name "chunkhound/$(APP_VERSION)/$(ARTIFACT_FILE)" \
+            --output table
+
+
+          # =================================================
+          # ACR
+          # =================================================
+
+          echo ""
+          echo "=========================================="
+          echo "VERIFY ACR"
+          echo "=========================================="
+
+          az acr show \
+            --name "$(ACR_NAME)" \
+            --resource-group "$(RESOURCE_GROUP)" \
+            --output table
+
+
+          # =================================================
+          # ACR LOGIN
+          # =================================================
+
+          echo ""
+          echo "=========================================="
+          echo "LOGIN TO ACR"
+          echo "=========================================="
+
+          az acr login \
+            --name "$(ACR_NAME)"
+
+
+          # =================================================
+          # ORAS PUSH VERSION
+          # =================================================
+
+          echo ""
+          echo "=========================================="
+          echo "ORAS PUSH VERSION"
+          echo "=========================================="
+
+          oras push \
+            "$(ACR_LOGIN_SERVER)/$(ACR_REPOSITORY):$(APP_VERSION)" \
+            "$(ARTIFACT_DIR)/$(ARTIFACT_FILE):application/gzip"
+
+
+          # =================================================
+          # ORAS PUSH LATEST
+          # =================================================
+
+          echo ""
+          echo "=========================================="
+          echo "ORAS PUSH LATEST"
+          echo "=========================================="
+
+          oras push \
+            "$(ACR_LOGIN_SERVER)/$(ACR_REPOSITORY):latest" \
+            "$(ARTIFACT_DIR)/$(ARTIFACT_FILE):application/gzip"
+
+
+          # =================================================
+          # VERIFY ACR
+          # =================================================
+
+          echo ""
+          echo "=========================================="
+          echo "VERIFY ACR ARTIFACT"
+          echo "=========================================="
+
+          az acr repository show \
+            --name "$(ACR_NAME)" \
+            --repository "$(ACR_REPOSITORY)" \
+            --output table
+
+
+          echo ""
+          echo "ACR TAGS:"
+
+          az acr repository show-tags \
+            --name "$(ACR_NAME)" \
+            --repository "$(ACR_REPOSITORY)" \
+            --output table
+
+
+          # =================================================
+          # SUCCESS
+          # =================================================
+
+          echo ""
+          echo "=========================================="
+          echo " CHUNKHOUND PIPELINE SUCCESS"
+          echo "=========================================="
+
+          echo ""
+          echo "Build Number:"
+          echo "$(Build.BuildId)"
+
+          echo ""
+          echo "Application Version:"
+          echo "$(APP_VERSION)"
+
+          echo ""
+          echo "Artifact:"
+          echo "$(ARTIFACT_FILE)"
+
+          echo ""
+          echo "Blob:"
+          echo "chunkhound/$(APP_VERSION)/$(ARTIFACT_FILE)"
+
+          echo ""
+          echo "ACR:"
+          echo "$(ACR_LOGIN_SERVER)"
+
+          echo ""
+          echo "ACR Repository:"
+          echo "$(ACR_REPOSITORY)"
+
+          echo ""
+          echo "ACR Tag:"
+          echo "$(APP_VERSION)"
+
+          echo ""
+          echo "=========================================="
