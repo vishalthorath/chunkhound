@@ -11,7 +11,7 @@ stages:
   jobs:
 
   - job: TestAgent
-    displayName: 'Test Agent'
+    displayName: 'Test Windows Agent'
 
     steps:
 
@@ -34,7 +34,7 @@ stages:
 
         Write-Host ""
         Write-Host "PowerShell:"
-        `$PSVersionTable.PSVersion
+        $PSVersionTable.PSVersion
 
         Write-Host ""
         Write-Host "Azure CLI:"
