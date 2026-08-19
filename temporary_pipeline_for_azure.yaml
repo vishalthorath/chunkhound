@@ -1,0 +1,22 @@
+trigger: none
+
+pool:
+  name: batch13-pool
+
+stages:
+- stage: Test
+  displayName: 'Test Agent'
+
+  jobs:
+  - job: TestJob
+    displayName: 'Test Job'
+
+    steps:
+
+    - script: |
+        echo "======================================"
+        echo "HELLO FROM AZURE DEVOPS"
+        echo "======================================"
+        echo "Agent: $(Agent.Name)"
+        echo "OS: $(Agent.OS)"
+      displayName: 'Test Agent'
