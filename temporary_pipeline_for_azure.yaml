@@ -19,4 +19,4 @@ stages:
         echo "======================================"
         echo "Agent: $(Agent.Name)"
         echo "OS: $(Agent.OS)"
-      displayName: 'Test Agent'
+      displayName: 'Test Agent22'
