@@ -21,12 +21,12 @@ variables:
   # ============================================================
   # Application
   # ============================================================
-  imageName: 'chunkhound'
+  artifactName: 'chunkhound'
 
   # ============================================================
-  # Version
+  # Python
   # ============================================================
-  majorVersion: '0'
+  pythonCommand: 'python'
 
 
 stages:
@@ -57,8 +57,8 @@ stages:
         Write-Host "Agent Name: $(Agent.Name)"
         Write-Host "Agent OS: $(Agent.OS)"
         Write-Host "Agent Version: $(Agent.Version)"
-        Write-Host ""
 
+        Write-Host ""
         Write-Host "======================================"
         Write-Host "Working Directory"
         Write-Host "======================================"
@@ -71,6 +71,13 @@ stages:
         Write-Host "======================================"
 
         git --version
+
+        Write-Host ""
+        Write-Host "======================================"
+        Write-Host "Python Version"
+        Write-Host "======================================"
+
+        python --version
 
       displayName: 'Verify Windows Agent'
 
@@ -95,197 +102,228 @@ stages:
             -o table
 
           Write-Host ""
-
-          Write-Host "======================================"
-          Write-Host "Azure CLI Version"
-          Write-Host "======================================"
-
-          az version
-
-          Write-Host ""
           Write-Host "Azure subscription verification completed successfully."
 
 
 # ============================================================
-# STAGE 2 - LOGIN TO NEW ACR AND PUSH EXISTING IMAGE
+# STAGE 2 - BUILD PYTHON ARTIFACT
 # ============================================================
-- stage: Push
-  displayName: 'Push Existing Image to New ACR'
+- stage: Build
+  displayName: 'Build Python Artifact'
 
   dependsOn: Verify
 
   jobs:
-  - job: PushImage
-    displayName: 'Push Existing Docker Image'
+  - job: BuildArtifact
+    displayName: 'Build ChunkHound Artifact'
 
     steps:
 
     - checkout: self
 
     # --------------------------------------------------------
-    # Show existing Docker images
+    # Verify Python
     # --------------------------------------------------------
     - powershell: |
 
         Write-Host "======================================"
-        Write-Host "Docker Version"
+        Write-Host "Python Environment"
         Write-Host "======================================"
 
-        docker --version
+        python --version
+        python -m pip --version
+
+      displayName: 'Verify Python'
+
+
+    # --------------------------------------------------------
+    # Upgrade Build Tools
+    # --------------------------------------------------------
+    - powershell: |
+
+        Write-Host "======================================"
+        Write-Host "Installing Build Tools"
+        Write-Host "======================================"
+
+        python -m pip install --upgrade pip
+        python -m pip install build
+
+      displayName: 'Install Python Build Tools'
+
+
+    # --------------------------------------------------------
+    # Build Artifact
+    # --------------------------------------------------------
+    - powershell: |
+
+        Write-Host "======================================"
+        Write-Host "Building ChunkHound Artifact"
+        Write-Host "======================================"
+
+        if (Test-Path "dist") {
+          Remove-Item "dist" -Recurse -Force
+        }
+
+        if (Test-Path "build") {
+          Remove-Item "build" -Recurse -Force
+        }
+
+        Get-ChildItem
+
+        python -m build
+
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Python artifact build failed."
+          exit 1
+        }
 
         Write-Host ""
         Write-Host "======================================"
-        Write-Host "Existing Docker Images"
+        Write-Host "Generated Artifacts"
         Write-Host "======================================"
 
-        docker images
+        Get-ChildItem dist
 
-      displayName: 'Verify Existing Docker Image'
+      displayName: 'Build ChunkHound Artifact'
 
 
     # --------------------------------------------------------
-    # Login to Azure ACR
+    # Publish Artifact to Azure DevOps
     # --------------------------------------------------------
-    - task: AzureCLI@2
-      displayName: 'Login to New Azure Container Registry'
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish Build Artifact'
       inputs:
-        azureSubscription: '$(azureServiceConnection)'
-        scriptType: 'ps'
-        scriptLocation: 'inlineScript'
-        inlineScript: |
+        targetPath: '$(Build.SourcesDirectory)\dist'
+        artifact: '$(artifactName)'
+        publishLocation: 'pipeline'
 
-          Write-Host "======================================"
-          Write-Host "Current Azure Subscription"
-          Write-Host "======================================"
 
-          az account show `
-            --query "{Name:name, SubscriptionId:id, TenantId:tenantId}" `
-            -o table
+# ============================================================
+# STAGE 3 - INSTALL ORAS
+# ============================================================
+- stage: InstallORAS
+  displayName: 'Install ORAS'
 
-          Write-Host ""
+  dependsOn: Build
 
-          Write-Host "======================================"
-          Write-Host "Logging into ACR"
-          Write-Host "======================================"
+  jobs:
+  - job: InstallORAS
+    displayName: 'Install ORAS CLI'
 
-          az acr login --name "$(acrName)"
+    steps:
 
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "ACR login failed."
+    - powershell: |
+
+        Write-Host "======================================"
+        Write-Host "Checking ORAS"
+        Write-Host "======================================"
+
+        $oras = Get-Command oras -ErrorAction SilentlyContinue
+
+        if ($oras) {
+
+          Write-Host "ORAS is already installed."
+          oras version
+
+        }
+        else {
+
+          Write-Host "ORAS is not installed."
+          Write-Host "Downloading ORAS..."
+
+          $orasVersion = "1.3.0"
+          $orasUrl = "https://github.com/oras-project/oras/releases/download/v$orasVersion/oras_$($orasVersion)_windows_amd64.zip"
+
+          $zipPath = "$(Agent.TempDirectory)\oras.zip"
+          $orasDirectory = "$(Agent.TempDirectory)\oras"
+
+          Invoke-WebRequest `
+            -Uri $orasUrl `
+            -OutFile $zipPath
+
+          if (Test-Path $orasDirectory) {
+            Remove-Item $orasDirectory -Recurse -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Path $orasDirectory `
+            -Force | Out-Null
+
+          Expand-Archive `
+            -Path $zipPath `
+            -DestinationPath $orasDirectory `
+            -Force
+
+          $orasExe = Join-Path $orasDirectory "oras.exe"
+
+          if (-not (Test-Path $orasExe)) {
+            Write-Error "ORAS executable was not found."
             exit 1
           }
 
+          Write-Host "ORAS installed successfully."
+
+          & $orasExe version
+
           Write-Host ""
-          Write-Host "ACR login successful."
+          Write-Host "Adding ORAS to PATH..."
 
-
-    # --------------------------------------------------------
-    # Tag Existing Docker Image
-    # --------------------------------------------------------
-    - powershell: |
-
-        Write-Host "======================================"
-        Write-Host "Checking Existing ChunkHound Image"
-        Write-Host "======================================"
-
-        docker images "$(imageName)"
-
-        Write-Host ""
-
-        $imageExists = docker images "$(imageName)" --format "{{.Repository}}"
-
-        if (-not $imageExists) {
-          Write-Error "Docker image '$(imageName)' was not found on the agent."
-          Write-Error "Make sure the image already exists before running this pipeline."
-          exit 1
+          Write-Host "##vso[task.prependpath]$orasDirectory"
         }
 
-        Write-Host "Existing image found."
-
-        Write-Host ""
-        Write-Host "======================================"
-        Write-Host "Tagging Image"
-        Write-Host "======================================"
-
-        docker tag `
-          "$(imageName):latest" `
-          "$(acrLoginServer)/$(imageName):$(Build.BuildNumber)"
-
-        docker tag `
-          "$(imageName):latest" `
-          "$(acrLoginServer)/$(imageName):latest"
-
-        Write-Host ""
-        Write-Host "Images tagged successfully."
-
-        docker images "$(acrLoginServer)/$(imageName)"
-
-      displayName: 'Tag Existing Docker Image'
-
-
-    # --------------------------------------------------------
-    # Push Existing Docker Image
-    # --------------------------------------------------------
-    - powershell: |
-
-        Write-Host "======================================"
-        Write-Host "Pushing Docker Image"
-        Write-Host "======================================"
-
-        Write-Host ""
-        Write-Host "Pushing version:"
-        Write-Host "$(acrLoginServer)/$(imageName):$(Build.BuildNumber)"
-
-        docker push `
-          "$(acrLoginServer)/$(imageName):$(Build.BuildNumber)"
-
-        if ($LASTEXITCODE -ne 0) {
-          Write-Error "Versioned Docker image push failed."
-          exit 1
-        }
-
-        Write-Host ""
-        Write-Host "Pushing latest:"
-        Write-Host "$(acrLoginServer)/$(imageName):latest"
-
-        docker push `
-          "$(acrLoginServer)/$(imageName):latest"
-
-        if ($LASTEXITCODE -ne 0) {
-          Write-Error "Latest Docker image push failed."
-          exit 1
-        }
-
-        Write-Host ""
-        Write-Host "======================================"
-        Write-Host "Images pushed successfully"
-        Write-Host "======================================"
-
-        Write-Host "$(acrLoginServer)/$(imageName):$(Build.BuildNumber)"
-        Write-Host "$(acrLoginServer)/$(imageName):latest"
-
-      displayName: 'Push Docker Image'
+      displayName: 'Install ORAS'
 
 
 # ============================================================
-# STAGE 3 - VERIFY IMAGE IN NEW ACR
+# STAGE 4 - LOGIN TO ACR AND PUSH ARTIFACT
 # ============================================================
-- stage: VerifyACR
-  displayName: 'Verify Image in ACR'
+- stage: PushArtifact
+  displayName: 'Push Artifact to ACR'
 
-  dependsOn: Push
+  dependsOn:
+    - Build
+    - InstallORAS
 
   jobs:
-  - job: VerifyACRImage
-    displayName: 'Verify ACR Image'
+  - job: PushArtifact
+    displayName: 'Push ChunkHound Artifact to ACR'
 
     steps:
 
     # --------------------------------------------------------
-    # Verify ACR
+    # Download Pipeline Artifact
+    # --------------------------------------------------------
+    - task: DownloadPipelineArtifact@2
+      displayName: 'Download Build Artifact'
+      inputs:
+        artifact: '$(artifactName)'
+        path: '$(Pipeline.Workspace)\$(artifactName)'
+
+
+    # --------------------------------------------------------
+    # Verify Artifact
+    # --------------------------------------------------------
+    - powershell: |
+
+        Write-Host "======================================"
+        Write-Host "Downloaded Artifact"
+        Write-Host "======================================"
+
+        $artifactPath = "$(Pipeline.Workspace)\$(artifactName)"
+
+        Get-ChildItem `
+          -Path $artifactPath `
+          -Recurse
+
+      displayName: 'Verify Build Artifact'
+
+
+    # --------------------------------------------------------
+    # Azure Login
     # --------------------------------------------------------
     - task: AzureCLI@2
-      displayName: 'Verify Image in New ACR'
+      displayName: 'Login to New Azure Subscription'
       inputs:
         azureSubscription: '$(azureServiceConnection)'
         scriptType: 'ps'
@@ -301,37 +339,157 @@ stages:
             -o table
 
           Write-Host ""
+          Write-Host "Azure login successful."
 
-          Write-Host "======================================"
-          Write-Host "ACR Repositories"
-          Write-Host "======================================"
 
-          az acr repository list `
-            --name "$(acrName)" `
-            --output table
+    # --------------------------------------------------------
+    # Login to ACR using ORAS
+    # --------------------------------------------------------
+    - powershell: |
 
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Unable to list ACR repositories."
-            exit 1
-          }
+        Write-Host "======================================"
+        Write-Host "ORAS ACR Login"
+        Write-Host "======================================"
+
+        $acrToken = az acr login `
+          --name "$(acrName)" `
+          --expose-token `
+          --output tsv `
+          --query accessToken
+
+        if (-not $acrToken) {
+          Write-Error "Failed to obtain ACR access token."
+          exit 1
+        }
+
+        $acrToken | oras login `
+          "$(acrLoginServer)" `
+          --username "00000000-0000-0000-0000-000000000000" `
+          --password-stdin
+
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "ORAS login to ACR failed."
+          exit 1
+        }
+
+        Write-Host ""
+        Write-Host "ORAS successfully authenticated to ACR."
+
+      displayName: 'Login to ACR with ORAS'
+
+
+    # --------------------------------------------------------
+    # Push Artifact as OCI Artifact
+    # --------------------------------------------------------
+    - powershell: |
+
+        Write-Host "======================================"
+        Write-Host "Pushing Artifact to ACR"
+        Write-Host "======================================"
+
+        $artifactPath = "$(Pipeline.Workspace)\$(artifactName)"
+
+        $files = Get-ChildItem `
+          -Path $artifactPath `
+          -File
+
+        if ($files.Count -eq 0) {
+          Write-Error "No build artifacts were found."
+          exit 1
+        }
+
+        foreach ($file in $files) {
 
           Write-Host ""
+          Write-Host "Pushing artifact:"
+          Write-Host $file.FullName
 
-          Write-Host "======================================"
-          Write-Host "ChunkHound Image Tags"
-          Write-Host "======================================"
+          $target = "$(acrLoginServer)/$(artifactName):$(Build.BuildNumber)"
 
-          az acr repository show-tags `
-            --name "$(acrName)" `
-            --repository "$(imageName)" `
-            --output table
+          oras push `
+            $target `
+            "$($file.FullName):application/octet-stream"
 
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "Unable to retrieve image tags."
+            Write-Error "Failed to push artifact to ACR."
             exit 1
           }
+        }
 
-          Write-Host ""
+        Write-Host ""
+        Write-Host "======================================"
+        Write-Host "Artifact pushed successfully"
+        Write-Host "======================================"
+
+        Write-Host "Repository:"
+        Write-Host "$(acrLoginServer)/$(artifactName)"
+
+        Write-Host "Tag:"
+        Write-Host "$(Build.BuildNumber)"
+
+      displayName: 'Push Artifact to ACR'
+
+
+# ============================================================
+# STAGE 5 - VERIFY ARTIFACT IN ACR
+# ============================================================
+- stage: VerifyACR
+  displayName: 'Verify Artifact in ACR'
+
+  dependsOn: PushArtifact
+
+  jobs:
+  - job: VerifyArtifact
+    displayName: 'Verify ACR Artifact'
+
+    steps:
+
+    # --------------------------------------------------------
+    # Azure Login
+    # --------------------------------------------------------
+    - task: AzureCLI@2
+      displayName: 'Verify Azure Subscription'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'ps'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+
           Write-Host "======================================"
-          Write-Host "ACR Verification Completed"
+          Write-Host "Azure Subscription"
           Write-Host "======================================"
+
+          az account show `
+            --query "{Name:name, SubscriptionId:id, TenantId:tenantId}" `
+            -o table
+
+
+    # --------------------------------------------------------
+    # Verify OCI Artifact
+    # --------------------------------------------------------
+    - powershell: |
+
+        Write-Host "======================================"
+        Write-Host "Verifying Artifact in ACR"
+        Write-Host "======================================"
+
+        oras manifest fetch `
+          "$(acrLoginServer)/$(artifactName):$(Build.BuildNumber)"
+
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Artifact verification failed."
+          exit 1
+        }
+
+        Write-Host ""
+        Write-Host "======================================"
+        Write-Host "Artifact Verification Successful"
+        Write-Host "======================================"
+
+        Write-Host "Repository:"
+        Write-Host "$(acrLoginServer)/$(artifactName)"
+
+        Write-Host "Tag:"
+        Write-Host "$(Build.BuildNumber)"
+
+      displayName: 'Verify Artifact in ACR'
