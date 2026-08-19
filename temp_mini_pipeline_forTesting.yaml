@@ -1,0 +1,41 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr: none
+
+pool:
+  name: 'batch13-pool'
+
+steps:
+
+- checkout: self
+
+- bash: |
+    echo "================================"
+    echo "SELF-HOSTED AGENT TEST"
+    echo "================================"
+
+    echo "User:"
+    whoami
+
+    echo "Hostname:"
+    hostname
+
+    echo "Working directory:"
+    pwd
+
+    echo "Git:"
+    git --version
+
+    echo "Python:"
+    python3 --version
+
+    echo "Azure CLI:"
+    az version
+
+    echo "ORAS:"
+    oras version
+
+  displayName: 'Test Self-Hosted Agent'
