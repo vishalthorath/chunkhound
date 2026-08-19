@@ -5,8 +5,12 @@ trigger:
 
 pr: none
 
+# =========================================================
+# SELF-HOSTED UBUNTU AGENT
+# =========================================================
+
 pool:
-  vmImage: 'ubuntu-latest'
+  name: 'batch13-pool'
 
 variables:
 
@@ -68,7 +72,55 @@ stages:
 
 
     # =====================================================
-    # 2. VERIFY CHECKOUT
+    # 2. VERIFY AGENT
+    # =====================================================
+
+    - bash: |
+
+        set -e
+
+        echo "=========================================="
+        echo "VERIFYING AZURE DEVOPS AGENT"
+        echo "=========================================="
+
+        echo ""
+        echo "Agent Name:"
+        echo "$(Agent.Name)"
+
+        echo ""
+        echo "Agent Machine:"
+        echo "$(Agent.MachineName)"
+
+        echo ""
+        echo "Agent OS:"
+        echo "$(Agent.OS)"
+
+        echo ""
+        echo "Agent Version:"
+        echo "$(Agent.Version)"
+
+        echo ""
+        echo "Working Directory:"
+        echo "$(Agent.BuildDirectory)"
+
+        echo ""
+        echo "Operating System:"
+        uname -a
+
+        echo ""
+        echo "Ubuntu Version:"
+        cat /etc/os-release
+
+        echo ""
+        echo "=========================================="
+        echo "AGENT VERIFICATION COMPLETED"
+        echo "=========================================="
+
+      displayName: 'Verify Self-Hosted Ubuntu Agent'
+
+
+    # =====================================================
+    # 3. VERIFY CHECKOUT
     # =====================================================
 
     - bash: |
@@ -102,7 +154,7 @@ stages:
 
 
     # =====================================================
-    # 3. VERIFY PYTHON
+    # 4. VERIFY PYTHON
     # =====================================================
 
     - bash: |
@@ -114,12 +166,15 @@ stages:
         echo "=========================================="
 
         echo ""
+        echo "Python:"
         python3 --version
 
         echo ""
+        echo "Pip:"
         python3 -m pip --version
 
         echo ""
+        echo "Python location:"
         which python3
 
         echo ""
@@ -129,7 +184,7 @@ stages:
 
 
     # =====================================================
-    # 4. CREATE VIRTUAL ENVIRONMENT
+    # 5. CREATE VIRTUAL ENVIRONMENT
     # =====================================================
 
     - bash: |
@@ -166,7 +221,7 @@ stages:
 
 
     # =====================================================
-    # 5. INSTALL DEPENDENCIES
+    # 6. INSTALL DEPENDENCIES
     # =====================================================
 
     - bash: |
@@ -214,7 +269,7 @@ stages:
 
 
     # =====================================================
-    # 6. VERIFY CHUNKHOUND SOURCE
+    # 7. VERIFY CHUNKHOUND SOURCE
     # =====================================================
 
     - bash: |
@@ -259,7 +314,7 @@ stages:
 
 
     # =====================================================
-    # 7. CREATE ARTIFACT
+    # 8. CREATE ARTIFACT
     # =====================================================
 
     - bash: |
@@ -290,7 +345,7 @@ stages:
         mkdir -p "$(ARTIFACT_DIR)"
 
         echo ""
-        echo "Creating tar.gz..."
+        echo "Creating tar.gz artifact..."
 
         tar \
           --exclude='./.git' \
@@ -302,7 +357,7 @@ stages:
           -czf "$(ARTIFACT_DIR)/$(ARTIFACT_FILE)" .
 
         echo ""
-        echo "Artifact created."
+        echo "Artifact created successfully."
 
         echo ""
         echo "Artifact details:"
@@ -326,7 +381,7 @@ stages:
 
 
     # =====================================================
-    # 8. PUBLISH TO AZURE DEVOPS
+    # 9. PUBLISH ARTIFACT TO AZURE DEVOPS
     # =====================================================
 
     - task: PublishPipelineArtifact@1
@@ -343,7 +398,7 @@ stages:
 
 
     # =====================================================
-    # 9. INSTALL ORAS
+    # 10. INSTALL / VERIFY ORAS
     # =====================================================
 
     - bash: |
@@ -353,6 +408,12 @@ stages:
         echo "=========================================="
         echo "INSTALLING / VERIFYING ORAS"
         echo "=========================================="
+
+        ORAS_VERSION="1.2.0"
+
+        mkdir -p "$HOME/bin"
+
+        export PATH="$HOME/bin:$PATH"
 
         if command -v oras >/dev/null 2>&1; then
 
@@ -364,53 +425,56 @@ stages:
           echo ""
           echo "ORAS is not installed."
 
-          ORAS_VERSION="1.2.0"
-
           echo ""
           echo "Downloading ORAS ${ORAS_VERSION}..."
 
           curl -fL \
             "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
-            -o oras.tar.gz
+            -o /tmp/oras.tar.gz
 
           echo ""
           echo "Extracting ORAS..."
 
-          mkdir -p oras-install
+          rm -rf /tmp/oras-install
 
-          tar -xzf oras.tar.gz -C oras-install
+          mkdir -p /tmp/oras-install
+
+          tar \
+            -xzf /tmp/oras.tar.gz \
+            -C /tmp/oras-install
 
           echo ""
           echo "Installing ORAS..."
 
-          mkdir -p "$HOME/bin"
-
           install \
-            oras-install/oras \
+            /tmp/oras-install/oras \
             "$HOME/bin/oras"
 
-          export PATH="$HOME/bin:$PATH"
-
-          echo ""
-          echo "ORAS installed."
-
         fi
+
+        echo ""
+        echo "ORAS location:"
+
+        which oras
 
         echo ""
         echo "ORAS version:"
 
         oras version
 
+        echo ""
+        echo "ORAS verification completed."
+
       displayName: 'Install and Verify ORAS'
 
 
     # =====================================================
-    # 10. AZURE + BLOB + ACR
+    # 11. AZURE BLOB STORAGE + ACR
     # =====================================================
 
     - task: AzureCLI@2
 
-      displayName: 'Upload Artifact to Blob and ACR'
+      displayName: 'Upload Artifact to Azure Blob and ACR'
 
       inputs:
 
@@ -425,6 +489,9 @@ stages:
         inlineScript: |
 
           set -e
+
+          # Make ORAS available inside this task
+          export PATH="$HOME/bin:$PATH"
 
           echo "=========================================="
           echo "AZURE ACCOUNT"
@@ -443,6 +510,15 @@ stages:
 
           VERSION="$(APP_VERSION)"
 
+          VERSIONED_BLOB="chunkhound/${VERSION}/$(ARTIFACT_FILE)"
+
+          LATEST_BLOB="chunkhound/latest/$(ARTIFACT_FILE)"
+
+          VERSION_TAG="$(ACR_LOGIN_SERVER)/$(ACR_REPOSITORY):${VERSION}"
+
+          LATEST_TAG="$(ACR_LOGIN_SERVER)/$(ACR_REPOSITORY):latest"
+
+
           echo ""
           echo "=========================================="
           echo "PIPELINE VARIABLES"
@@ -459,6 +535,18 @@ stages:
           echo ""
           echo "Artifact:"
           echo "$ARTIFACT_PATH"
+
+          echo ""
+          echo "Resource Group:"
+          echo "$(RESOURCE_GROUP)"
+
+          echo ""
+          echo "Storage Account:"
+          echo "$(STORAGE_ACCOUNT)"
+
+          echo ""
+          echo "Storage Container:"
+          echo "$(STORAGE_CONTAINER)"
 
           echo ""
           echo "ACR:"
@@ -486,7 +574,9 @@ stages:
             echo ""
             echo "Artifact directory:"
 
-            ls -la "$(Build.SourcesDirectory)/$(ARTIFACT_DIR)" || true
+            ls -la \
+              "$(Build.SourcesDirectory)/$(ARTIFACT_DIR)" \
+              || true
 
             exit 1
 
@@ -561,8 +651,6 @@ stages:
           echo "UPLOADING VERSIONED BLOB"
           echo "=========================================="
 
-          VERSIONED_BLOB="chunkhound/${VERSION}/$(ARTIFACT_FILE)"
-
           echo ""
           echo "Blob:"
           echo "$VERSIONED_BLOB"
@@ -587,8 +675,6 @@ stages:
           echo "=========================================="
           echo "UPLOADING LATEST BLOB"
           echo "=========================================="
-
-          LATEST_BLOB="chunkhound/latest/$(ARTIFACT_FILE)"
 
           echo ""
           echo "Blob:"
@@ -686,22 +772,22 @@ stages:
 
           echo ""
           echo "=========================================="
-          echo "VERIFY ORAS"
+          echo "VERIFYING ORAS"
           echo "=========================================="
+
+          which oras
 
           oras version
 
 
           # =================================================
-          # PUSH VERSIONED ARTIFACT TO ACR
+          # PUSH VERSIONED ARTIFACT
           # =================================================
 
           echo ""
           echo "=========================================="
           echo "PUSHING VERSIONED ARTIFACT TO ACR"
           echo "=========================================="
-
-          VERSION_TAG="$(ACR_LOGIN_SERVER)/$(ACR_REPOSITORY):${VERSION}"
 
           echo ""
           echo "Target:"
@@ -716,15 +802,13 @@ stages:
 
 
           # =================================================
-          # PUSH LATEST ARTIFACT TO ACR
+          # PUSH LATEST ARTIFACT
           # =================================================
 
           echo ""
           echo "=========================================="
           echo "PUSHING LATEST ARTIFACT TO ACR"
           echo "=========================================="
-
-          LATEST_TAG="$(ACR_LOGIN_SERVER)/$(ACR_REPOSITORY):latest"
 
           echo ""
           echo "Target:"
@@ -789,15 +873,11 @@ stages:
 
           echo ""
           echo "Application Version:"
-          echo "$(APP_VERSION)"
+          echo "$VERSION"
 
           echo ""
           echo "Artifact:"
           echo "$(ARTIFACT_FILE)"
-
-          echo ""
-          echo "Blob Storage:"
-          echo "$(STORAGE_ACCOUNT)"
 
           echo ""
           echo "Versioned Blob:"
@@ -816,11 +896,11 @@ stages:
           echo "$(ACR_REPOSITORY)"
 
           echo ""
-          echo "ACR Version Tag:"
+          echo "ACR Version:"
           echo "$VERSION"
 
           echo ""
-          echo "ACR Latest Tag:"
+          echo "ACR Latest:"
           echo "latest"
 
           echo ""
