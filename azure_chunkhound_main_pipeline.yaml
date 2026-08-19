@@ -49,6 +49,7 @@ stages:
     # Verify Windows Agent
     # --------------------------------------------------------
     - powershell: |
+
         Write-Host "======================================"
         Write-Host "Agent Information"
         Write-Host "======================================"
@@ -63,8 +64,8 @@ stages:
         Write-Host "======================================"
 
         Get-Location
-        Write-Host ""
 
+        Write-Host ""
         Write-Host "======================================"
         Write-Host "Git Version"
         Write-Host "======================================"
@@ -106,100 +107,44 @@ stages:
 
 
 # ============================================================
-# STAGE 2 - BUILD
+# STAGE 2 - LOGIN TO NEW ACR AND PUSH EXISTING IMAGE
 # ============================================================
-- stage: Build
-  displayName: 'Build Application'
+- stage: Push
+  displayName: 'Push Existing Image to New ACR'
 
   dependsOn: Verify
 
   jobs:
-  - job: BuildApplication
-    displayName: 'Build ChunkHound'
+  - job: PushImage
+    displayName: 'Push Existing Docker Image'
 
     steps:
 
     - checkout: self
 
     # --------------------------------------------------------
-    # Verify Build Tools
+    # Show existing Docker images
     # --------------------------------------------------------
     - powershell: |
 
-        Write-Host "======================================"
-        Write-Host "Repository"
-        Write-Host "======================================"
-
-        Get-Location
-        Get-ChildItem
-
-        Write-Host ""
-        Write-Host "======================================"
-        Write-Host "Python Version"
-        Write-Host "======================================"
-
-        python --version
-
-        Write-Host ""
         Write-Host "======================================"
         Write-Host "Docker Version"
         Write-Host "======================================"
 
         docker --version
 
-      displayName: 'Verify Build Tools'
-
-
-    # --------------------------------------------------------
-    # Build Docker Image
-    # --------------------------------------------------------
-    - powershell: |
-
-        Write-Host "======================================"
-        Write-Host "Building Docker Image"
-        Write-Host "======================================"
-
-        docker build `
-          -t "$(acrLoginServer)/$(imageName):$(Build.BuildNumber)" `
-          -t "$(acrLoginServer)/$(imageName):latest" `
-          .
-
-        if ($LASTEXITCODE -ne 0) {
-          Write-Error "Docker build failed."
-          exit 1
-        }
-
-        Write-Host ""
-        Write-Host "Docker image created successfully."
-
         Write-Host ""
         Write-Host "======================================"
-        Write-Host "Docker Images"
+        Write-Host "Existing Docker Images"
         Write-Host "======================================"
 
         docker images
 
-      displayName: 'Build Docker Image'
+      displayName: 'Verify Existing Docker Image'
 
-
-# ============================================================
-# STAGE 3 - LOGIN AND PUSH TO NEW ACR
-# ============================================================
-- stage: Push
-  displayName: 'Push Image to New ACR'
-
-  dependsOn: Build
-
-  jobs:
-  - job: PushImage
-    displayName: 'Push Docker Image'
-
-    steps:
-
-    - checkout: self
 
     # --------------------------------------------------------
-    # Login to Azure and ACR
+    # Login to Azure ACR
     # --------------------------------------------------------
     - task: AzureCLI@2
       displayName: 'Login to New Azure Container Registry'
@@ -235,16 +180,60 @@ stages:
 
 
     # --------------------------------------------------------
-    # Push Docker Images
+    # Tag Existing Docker Image
     # --------------------------------------------------------
     - powershell: |
 
         Write-Host "======================================"
-        Write-Host "Pushing Docker Images"
+        Write-Host "Checking Existing ChunkHound Image"
+        Write-Host "======================================"
+
+        docker images "$(imageName)"
+
+        Write-Host ""
+
+        $imageExists = docker images "$(imageName)" --format "{{.Repository}}"
+
+        if (-not $imageExists) {
+          Write-Error "Docker image '$(imageName)' was not found on the agent."
+          Write-Error "Make sure the image already exists before running this pipeline."
+          exit 1
+        }
+
+        Write-Host "Existing image found."
+
+        Write-Host ""
+        Write-Host "======================================"
+        Write-Host "Tagging Image"
+        Write-Host "======================================"
+
+        docker tag `
+          "$(imageName):latest" `
+          "$(acrLoginServer)/$(imageName):$(Build.BuildNumber)"
+
+        docker tag `
+          "$(imageName):latest" `
+          "$(acrLoginServer)/$(imageName):latest"
+
+        Write-Host ""
+        Write-Host "Images tagged successfully."
+
+        docker images "$(acrLoginServer)/$(imageName)"
+
+      displayName: 'Tag Existing Docker Image'
+
+
+    # --------------------------------------------------------
+    # Push Existing Docker Image
+    # --------------------------------------------------------
+    - powershell: |
+
+        Write-Host "======================================"
+        Write-Host "Pushing Docker Image"
         Write-Host "======================================"
 
         Write-Host ""
-        Write-Host "Pushing:"
+        Write-Host "Pushing version:"
         Write-Host "$(acrLoginServer)/$(imageName):$(Build.BuildNumber)"
 
         docker push `
@@ -256,7 +245,7 @@ stages:
         }
 
         Write-Host ""
-        Write-Host "Pushing:"
+        Write-Host "Pushing latest:"
         Write-Host "$(acrLoginServer)/$(imageName):latest"
 
         docker push `
@@ -279,7 +268,7 @@ stages:
 
 
 # ============================================================
-# STAGE 4 - VERIFY IMAGE IN NEW ACR
+# STAGE 3 - VERIFY IMAGE IN NEW ACR
 # ============================================================
 - stage: VerifyACR
   displayName: 'Verify Image in ACR'
@@ -329,7 +318,7 @@ stages:
           Write-Host ""
 
           Write-Host "======================================"
-          Write-Host "Image Tags"
+          Write-Host "ChunkHound Image Tags"
           Write-Host "======================================"
 
           az acr repository show-tags `
@@ -343,4 +332,6 @@ stages:
           }
 
           Write-Host ""
-          Write-Host "ACR verification completed successfully."
+          Write-Host "======================================"
+          Write-Host "ACR Verification Completed"
+          Write-Host "======================================"
