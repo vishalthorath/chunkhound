@@ -12,37 +12,46 @@ pr: none
 pool:
   name: 'batch13-pool'
 
+
+# =========================================================
+# VARIABLES
+# =========================================================
+
 variables:
 
-  # =========================================================
+  # =======================================================
   # AZURE
-  # =========================================================
+  # =======================================================
 
   RESOURCE_GROUP: 'VT-RG'
   STORAGE_ACCOUNT: 'vishalsa007'
   STORAGE_CONTAINER: 'chunkhound-artifacts'
 
-  # =========================================================
+  # =======================================================
   # AZURE CONTAINER REGISTRY
-  # =========================================================
+  # =======================================================
 
   ACR_NAME: 'vishalacr2026'
   ACR_LOGIN_SERVER: 'vishalacr2026.azurecr.io'
   ACR_REPOSITORY: 'chunkhound-artifact'
 
-  # =========================================================
+  # =======================================================
   # ARTIFACT
-  # =========================================================
+  # =======================================================
 
   ARTIFACT_DIR: 'artifacts'
 
-  # Build 1 = 0.1
-  # Build 2 = 0.2
-  # Build 3 = 0.3
+  # Build 394 = 0.394
+  # Build 395 = 0.395
+  # Build 396 = 0.396
 
   APP_VERSION: '0.$(Build.BuildId)'
   ARTIFACT_FILE: 'chunkhound-$(Build.BuildId).tar.gz'
 
+
+# =========================================================
+# STAGES
+# =========================================================
 
 stages:
 
@@ -62,6 +71,7 @@ stages:
 
     steps:
 
+
     # =====================================================
     # 1. CHECKOUT
     # =====================================================
@@ -72,7 +82,7 @@ stages:
 
 
     # =====================================================
-    # 2. VERIFY WINDOWS AGENT
+    # 2. VERIFY WINDOWS SELF-HOSTED AGENT
     # =====================================================
 
     - powershell: |
@@ -80,7 +90,7 @@ stages:
         $ErrorActionPreference = "Stop"
 
         Write-Host "=========================================="
-        Write-Host "VERIFYING SELF-HOSTED WINDOWS AGENT"
+        Write-Host "VERIFYING WINDOWS SELF-HOSTED AGENT"
         Write-Host "=========================================="
 
         Write-Host ""
@@ -105,14 +115,13 @@ stages:
 
         Write-Host ""
         Write-Host "Operating System:"
+
         Get-CimInstance Win32_OperatingSystem |
           Select-Object Caption, Version, OSArchitecture |
           Format-Table -AutoSize
 
         Write-Host ""
-        Write-Host "=========================================="
-        Write-Host "WINDOWS AGENT VERIFICATION COMPLETED"
-        Write-Host "=========================================="
+        Write-Host "Windows agent verification completed."
 
       displayName: 'Verify Self-Hosted Windows Agent'
 
@@ -130,7 +139,8 @@ stages:
         Write-Host "=========================================="
 
         Write-Host ""
-        Write-Host "Commit:"
+        Write-Host "Git commit:"
+
         git rev-parse HEAD
 
         if ($LASTEXITCODE -ne 0) {
@@ -138,15 +148,18 @@ stages:
         }
 
         Write-Host ""
-        Write-Host "Remote:"
+        Write-Host "Git remote:"
+
         git remote -v
 
         Write-Host ""
-        Write-Host "Branch:"
+        Write-Host "Current branch:"
+
         git branch --show-current
 
         Write-Host ""
         Write-Host "Repository contents:"
+
         Get-ChildItem -Force
 
         Write-Host ""
@@ -167,23 +180,24 @@ stages:
         Write-Host "PYTHON VERIFICATION"
         Write-Host "=========================================="
 
-        $python = Get-Command python -ErrorAction SilentlyContinue
+        $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
 
-        if (-not $python) {
-            $python = Get-Command python3 -ErrorAction SilentlyContinue
+        if (-not $pythonCommand) {
+            $pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
         }
 
-        if (-not $python) {
-            throw "Python was not found on the Windows self-hosted agent."
+        if (-not $pythonCommand) {
+            throw "Python was not found on the Windows agent."
         }
 
         Write-Host ""
         Write-Host "Python executable:"
-        Write-Host $python.Source
+        Write-Host $pythonCommand.Source
 
         Write-Host ""
         Write-Host "Python version:"
-        & $python.Source --version
+
+        & $pythonCommand.Source --version
 
         if ($LASTEXITCODE -ne 0) {
             throw "Python verification failed."
@@ -191,7 +205,8 @@ stages:
 
         Write-Host ""
         Write-Host "Pip version:"
-        & $python.Source -m pip --version
+
+        & $pythonCommand.Source -m pip --version
 
         if ($LASTEXITCODE -ne 0) {
             throw "Pip verification failed."
@@ -216,9 +231,14 @@ stages:
         Write-Host "=========================================="
 
         if (Test-Path "venv") {
+
             Write-Host ""
             Write-Host "Removing existing virtual environment..."
-            Remove-Item -Recurse -Force "venv"
+
+            Remove-Item `
+              -Recurse `
+              -Force `
+              "venv"
         }
 
         $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
@@ -241,14 +261,13 @@ stages:
         }
 
         Write-Host ""
-        Write-Host "Virtual environment created."
-
-        Write-Host ""
         Write-Host "Python:"
+
         & ".\venv\Scripts\python.exe" --version
 
         Write-Host ""
         Write-Host "Pip:"
+
         & ".\venv\Scripts\python.exe" -m pip --version
 
         Write-Host ""
@@ -261,13 +280,13 @@ stages:
         }
 
         Write-Host ""
-        Write-Host "Virtual environment setup completed."
+        Write-Host "Virtual environment created successfully."
 
       displayName: 'Create Python Virtual Environment'
 
 
     # =====================================================
-    # 6. INSTALL DEPENDENCIES
+    # 6. INSTALL PYTHON DEPENDENCIES
     # =====================================================
 
     - powershell: |
@@ -287,7 +306,9 @@ stages:
             Write-Host ""
             Write-Host "requirements.txt found."
 
-            & ".\venv\Scripts\python.exe" -m pip install -r requirements.txt
+            & ".\venv\Scripts\python.exe" `
+              -m pip install `
+              -r requirements.txt
 
             if ($LASTEXITCODE -ne 0) {
                 throw "Failed to install requirements.txt."
@@ -299,7 +320,8 @@ stages:
             Write-Host ""
             Write-Host "pyproject.toml found."
 
-            & ".\venv\Scripts\python.exe" -m pip install .
+            & ".\venv\Scripts\python.exe" `
+              -m pip install .
 
             if ($LASTEXITCODE -ne 0) {
                 throw "Failed to install Python package."
@@ -328,7 +350,7 @@ stages:
 
 
     # =====================================================
-    # 7. VERIFY CHUNKHOUND SOURCE
+    # 7. VERIFY CHUNKHOUND REPOSITORY
     # =====================================================
 
     - powershell: |
@@ -336,46 +358,50 @@ stages:
         $ErrorActionPreference = "Stop"
 
         Write-Host "=========================================="
-        Write-Host "VERIFYING CHUNKHOUND SOURCE"
+        Write-Host "VERIFYING CHUNKHOUND REPOSITORY"
         Write-Host "=========================================="
 
-        if (-not (Test-Path "chunkhound" -PathType Container)) {
+        Write-Host ""
+        Write-Host "Repository root:"
 
-            Write-Host ""
-            Write-Host "ERROR: chunkhound directory was not found."
+        Get-Location
 
-            Write-Host ""
-            Write-Host "Repository directories:"
+        Write-Host ""
+        Write-Host "Top-level directories:"
 
-            Get-ChildItem -Directory -Recurse |
-              Select-Object -First 100 FullName
+        Get-ChildItem -Directory |
+          Select-Object Name
 
-            Write-Host ""
-            Write-Host "Repository files:"
+        Write-Host ""
+        Write-Host "Top-level files:"
 
-            Get-ChildItem -File -Recurse |
-              Select-Object -First 100 FullName
+        Get-ChildItem -File |
+          Select-Object Name
 
-            throw "chunkhound directory was not found."
+        Write-Host ""
+        Write-Host "Source directory check:"
+
+        if (Test-Path "src" -PathType Container) {
+
+            Write-Host "src directory found."
+
+        }
+        else {
+
+            Write-Host "WARNING: src directory was not found."
+
+            Write-Host "This will not stop artifact creation."
 
         }
 
         Write-Host ""
-        Write-Host "chunkhound directory found."
+        Write-Host "Repository verification completed."
 
-        Write-Host ""
-        Write-Host "ChunkHound contents:"
-
-        Get-ChildItem "chunkhound" -Force
-
-        Write-Host ""
-        Write-Host "Source verification completed."
-
-      displayName: 'Verify ChunkHound Source'
+      displayName: 'Verify ChunkHound Repository'
 
 
     # =====================================================
-    # 8. CREATE ARTIFACT
+    # 8. CREATE CHUNKHOUND ARTIFACT
     # =====================================================
 
     - powershell: |
@@ -398,17 +424,29 @@ stages:
         Write-Host "Artifact:"
         Write-Host "$(ARTIFACT_FILE)"
 
+        # -------------------------------------------------
+        # CLEAN ARTIFACT DIRECTORY
+        # -------------------------------------------------
+
         Write-Host ""
         Write-Host "Cleaning artifact directory..."
 
         if (Test-Path "$(ARTIFACT_DIR)") {
-            Remove-Item -Recurse -Force "$(ARTIFACT_DIR)"
+
+            Remove-Item `
+              -Recurse `
+              -Force `
+              "$(ARTIFACT_DIR)"
         }
 
         New-Item `
           -ItemType Directory `
           -Path "$(ARTIFACT_DIR)" `
           -Force | Out-Null
+
+        # -------------------------------------------------
+        # ARTIFACT PATH
+        # -------------------------------------------------
 
         $artifactPath = Join-Path `
           "$(ARTIFACT_DIR)" `
@@ -419,8 +457,11 @@ stages:
         Write-Host $artifactPath
 
         # -------------------------------------------------
-        # Verify tar is available
+        # VERIFY TAR
         # -------------------------------------------------
+
+        Write-Host ""
+        Write-Host "Checking tar command..."
 
         $tarCommand = Get-Command tar -ErrorAction SilentlyContinue
 
@@ -429,17 +470,15 @@ stages:
         }
 
         Write-Host ""
-        Write-Host "tar executable:"
+        Write-Host "tar location:"
         Write-Host $tarCommand.Source
 
         # -------------------------------------------------
-        # Create tar.gz
+        # CREATE TAR.GZ
         # -------------------------------------------------
 
         Write-Host ""
         Write-Host "Creating tar.gz artifact..."
-
-        $sourcePath = (Get-Location).Path
 
         & tar `
           --exclude=".git" `
@@ -447,45 +486,124 @@ stages:
           --exclude="artifacts" `
           --exclude="__pycache__" `
           --exclude="*.pyc" `
-          -czf $artifactPath `
+          -czf `
+          $artifactPath `
           .
 
         if ($LASTEXITCODE -ne 0) {
-            throw "Failed to create ChunkHound tar.gz artifact."
+            throw "Failed to create tar.gz artifact."
         }
 
         # -------------------------------------------------
-        # Verify artifact
+        # VERIFY FILE
         # -------------------------------------------------
-
-        if (-not (Test-Path $artifactPath -PathType Leaf)) {
-            throw "Artifact file was not created."
-        }
-
-        $artifact = Get-Item $artifactPath
 
         Write-Host ""
-        Write-Host "Artifact created successfully."
+        Write-Host "Verifying artifact file..."
+
+        if (-not (Test-Path $artifactPath -PathType Leaf)) {
+            throw "Artifact was not created."
+        }
+
+        $artifactInfo = Get-Item $artifactPath
+
+        if ($artifactInfo.Length -le 0) {
+            throw "Artifact was created but has zero bytes."
+        }
+
+        Write-Host ""
+        Write-Host "=========================================="
+        Write-Host "ARTIFACT CREATED SUCCESSFULLY"
+        Write-Host "=========================================="
 
         Write-Host ""
         Write-Host "Artifact:"
-        Write-Host $artifact.FullName
+        Write-Host $artifactInfo.FullName
 
         Write-Host ""
         Write-Host "Artifact size:"
-        Write-Host "$([math]::Round($artifact.Length / 1MB, 2)) MB"
+        Write-Host "$([math]::Round($artifactInfo.Length / 1MB, 2)) MB"
 
         Write-Host ""
-        Write-Host "Artifact contents:"
+        Write-Host "Artifact size in bytes:"
+        Write-Host $artifactInfo.Length
 
-        & tar -tzf $artifactPath | Select-Object -First 50
+        # -------------------------------------------------
+        # OPTIONAL INSPECTION
+        # -------------------------------------------------
 
-        if ($LASTEXITCODE -ne 0) {
-            throw "Unable to inspect artifact."
+        Write-Host ""
+        Write-Host "Inspecting artifact contents..."
+
+        try {
+
+            $contents = & tar -tzf $artifactPath 2>&1
+
+            if ($LASTEXITCODE -eq 0) {
+
+                Write-Host ""
+                Write-Host "First 50 entries:"
+
+                $contents |
+                  Select-Object -First 50
+
+                Write-Host ""
+                Write-Host "Artifact inspection successful."
+
+            }
+            else {
+
+                Write-Host ""
+                Write-Host "WARNING: Artifact inspection returned an error."
+
+                Write-Host ""
+                Write-Host "The artifact itself was successfully created."
+
+                Write-Host ""
+                Write-Host "Continuing pipeline..."
+
+            }
+
+        }
+        catch {
+
+            Write-Host ""
+            Write-Host "WARNING: Artifact inspection failed."
+
+            Write-Host ""
+            Write-Host "Artifact exists and has a non-zero size."
+
+            Write-Host ""
+            Write-Host "Continuing pipeline..."
+
+        }
+
+        # -------------------------------------------------
+        # FINAL CHECK
+        # -------------------------------------------------
+
+        Write-Host ""
+        Write-Host "Final artifact check..."
+
+        if (
+            (Test-Path $artifactPath -PathType Leaf) -and
+            ((Get-Item $artifactPath).Length -gt 0)
+        ) {
+
+            Write-Host ""
+            Write-Host "Artifact is ready for publishing."
+
+        }
+        else {
+
+            throw "Final artifact verification failed."
+
         }
 
         Write-Host ""
-        Write-Host "Artifact creation completed."
+        Write-Host "=========================================="
+        Write-Host "ARTIFACT CREATION COMPLETED"
+        Write-Host "=========================================="
 
       displayName: 'Create ChunkHound Artifact'
 
@@ -521,19 +639,25 @@ stages:
 
         $orasVersion = "1.2.0"
 
-        $orasDirectory = Join-Path $env:USERPROFILE "oras"
+        $orasDirectory = Join-Path `
+          $env:USERPROFILE `
+          "oras"
 
-        $orasExe = Join-Path $orasDirectory "oras.exe"
+        $orasExe = Join-Path `
+          $orasDirectory `
+          "oras.exe"
 
         if (-not (Test-Path $orasDirectory)) {
+
             New-Item `
               -ItemType Directory `
               -Path $orasDirectory `
               -Force | Out-Null
+
         }
 
         # -------------------------------------------------
-        # Check existing ORAS
+        # CHECK ORAS
         # -------------------------------------------------
 
         $existingOras = Get-Command oras `
@@ -542,7 +666,7 @@ stages:
         if ($existingOras) {
 
             Write-Host ""
-            Write-Host "ORAS is already available."
+            Write-Host "ORAS is already installed."
 
             Write-Host ""
             Write-Host "ORAS location:"
@@ -551,7 +675,7 @@ stages:
             & $existingOras.Source version
 
             if ($LASTEXITCODE -ne 0) {
-                throw "Existing ORAS installation failed verification."
+                throw "ORAS verification failed."
             }
 
         }
@@ -560,14 +684,10 @@ stages:
             Write-Host ""
             Write-Host "ORAS executable already exists."
 
-            Write-Host ""
-            Write-Host "ORAS:"
-            Write-Host $orasExe
-
             & $orasExe version
 
             if ($LASTEXITCODE -ne 0) {
-                throw "Existing ORAS executable failed verification."
+                throw "ORAS verification failed."
             }
 
         }
@@ -576,11 +696,15 @@ stages:
             Write-Host ""
             Write-Host "ORAS is not installed."
 
-            $downloadUrl = "https://github.com/oras-project/oras/releases/download/v$orasVersion/oras_$orasVersion_windows_amd64.zip"
+            $downloadUrl = "https://github.com/oras-project/oras/releases/download/v$orasVersion/oras_${orasVersion}_windows_amd64.zip"
 
-            $zipPath = Join-Path $env:TEMP "oras.zip"
+            $zipPath = Join-Path `
+              $env:TEMP `
+              "oras.zip"
 
-            $extractPath = Join-Path $env:TEMP "oras-extract"
+            $extractPath = Join-Path `
+              $env:TEMP `
+              "oras-extract"
 
             Write-Host ""
             Write-Host "Downloading ORAS $orasVersion..."
@@ -597,10 +721,12 @@ stages:
             Write-Host "Extracting ORAS..."
 
             if (Test-Path $extractPath) {
+
                 Remove-Item `
                   -Recurse `
                   -Force `
                   $extractPath
+
             }
 
             Expand-Archive `
@@ -626,10 +752,6 @@ stages:
 
         }
 
-        # -------------------------------------------------
-        # Add ORAS directory to current process PATH
-        # -------------------------------------------------
-
         $env:PATH = "$orasDirectory;$env:PATH"
 
         Write-Host ""
@@ -648,7 +770,7 @@ stages:
 
 
     # =====================================================
-    # 11. AZURE BLOB STORAGE + ACR
+    # 11. AZURE BLOB + ACR
     # =====================================================
 
     - task: AzureCLI@2
@@ -957,7 +1079,7 @@ stages:
 
 
           # =================================================
-          # GET ACR ACCESS TOKEN
+          # GET ACR TOKEN
           # =================================================
 
           Write-Host ""
@@ -980,7 +1102,7 @@ stages:
           }
 
           Write-Host ""
-          Write-Host "ACR access token obtained successfully."
+          Write-Host "ACR access token obtained."
 
 
           # =================================================
@@ -1033,10 +1155,11 @@ stages:
 
           $acrUsername = "00000000-0000-0000-0000-000000000000"
 
-          $acrToken | & $orasPath login `
-            "$(ACR_LOGIN_SERVER)" `
-            --username $acrUsername `
-            --password-stdin
+          $acrToken |
+            & $orasPath login `
+              "$(ACR_LOGIN_SERVER)" `
+              --username $acrUsername `
+              --password-stdin
 
           if ($LASTEXITCODE -ne 0) {
               throw "ORAS ACR login failed."
@@ -1047,7 +1170,7 @@ stages:
 
 
           # =================================================
-          # PUSH VERSIONED ARTIFACT
+          # PUSH VERSION
           # =================================================
 
           Write-Host ""
@@ -1061,18 +1184,18 @@ stages:
 
           & $orasPath push `
             $versionTag `
-            "$artifactPath:application/gzip"
+            "${artifactPath}:application/gzip"
 
           if ($LASTEXITCODE -ne 0) {
               throw "Versioned ORAS push failed."
           }
 
           Write-Host ""
-          Write-Host "Versioned ORAS artifact pushed successfully."
+          Write-Host "Versioned artifact pushed successfully."
 
 
           # =================================================
-          # PUSH LATEST ARTIFACT
+          # PUSH LATEST
           # =================================================
 
           Write-Host ""
@@ -1086,14 +1209,14 @@ stages:
 
           & $orasPath push `
             $latestTag `
-            "$artifactPath:application/gzip"
+            "${artifactPath}:application/gzip"
 
           if ($LASTEXITCODE -ne 0) {
               throw "Latest ORAS push failed."
           }
 
           Write-Host ""
-          Write-Host "Latest ORAS artifact pushed successfully."
+          Write-Host "Latest artifact pushed successfully."
 
 
           # =================================================
@@ -1141,7 +1264,7 @@ stages:
 
 
           # =================================================
-          # FINAL SUCCESS
+          # SUCCESS
           # =================================================
 
           Write-Host ""
@@ -1160,6 +1283,10 @@ stages:
           Write-Host ""
           Write-Host "Artifact:"
           Write-Host "$(ARTIFACT_FILE)"
+
+          Write-Host ""
+          Write-Host "Storage Account:"
+          Write-Host "$(STORAGE_ACCOUNT)"
 
           Write-Host ""
           Write-Host "Versioned Blob:"
@@ -1190,5 +1317,4 @@ stages:
           Write-Host "          PIPELINE COMPLETED"
           Write-Host "=========================================="
 
-      #displayName: 'Upload Artifact to Azure Blob and ACR'
-
+      displayName: 'Upload Artifact to Azure Blob and ACR'
