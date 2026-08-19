@@ -7,34 +7,32 @@ pool:
   name: batch13-pool
 
 variables:
-  # ==============================
+  # ============================================================
   # Azure
-  # ==============================
+  # ============================================================
   azureServiceConnection: 'batch13-connection'
 
-  # ==============================
+  # ============================================================
   # Azure Container Registry
-  # ==============================
+  # ============================================================
   acrName: 'vishalacr2026'
-  acrLoginServer: 'vishalacr2026E.azurecr.io'
+  acrLoginServer: 'vishalacr2026.azurecr.io'
 
-  # ==============================
+  # ============================================================
   # Application
-  # ==============================
+  # ============================================================
   imageName: 'chunkhound'
 
-  # ==============================
+  # ============================================================
   # Version
-  # Build 1 = 0.1
-  # Build 2 = 0.2
-  # Build 3 = 0.3
-  # ==============================
+  # ============================================================
   majorVersion: '0'
+
 
 stages:
 
 # ============================================================
-# STAGE 1 - VERIFY AGENT AND NEW AZURE SUBSCRIPTION
+# STAGE 1 - VERIFY AGENT AND AZURE SUBSCRIPTION
 # ============================================================
 - stage: Verify
   displayName: 'Verify Agent and Azure Subscription'
@@ -47,53 +45,64 @@ stages:
 
     - checkout: self
 
-    - script: |
-        echo "======================================"
-        echo "Agent Information"
-        echo "======================================"
-        echo "Agent Name: $(Agent.Name)"
-        echo "Agent OS: $(Agent.OS)"
-        echo "Agent Version: $(Agent.Version)"
-        echo ""
+    # --------------------------------------------------------
+    # Verify Windows Agent
+    # --------------------------------------------------------
+    - powershell: |
+        Write-Host "======================================"
+        Write-Host "Agent Information"
+        Write-Host "======================================"
 
-        echo "======================================"
-        echo "Working Directory"
-        echo "======================================"
-        pwd
-        echo ""
+        Write-Host "Agent Name: $(Agent.Name)"
+        Write-Host "Agent OS: $(Agent.OS)"
+        Write-Host "Agent Version: $(Agent.Version)"
+        Write-Host ""
 
-        echo "======================================"
-        echo "Git Version"
-        echo "======================================"
+        Write-Host "======================================"
+        Write-Host "Working Directory"
+        Write-Host "======================================"
+
+        Get-Location
+        Write-Host ""
+
+        Write-Host "======================================"
+        Write-Host "Git Version"
+        Write-Host "======================================"
+
         git --version
-      displayName: 'Verify Agent'
 
-    # IMPORTANT:
-    # This task uses the NEW Azure service connection.
+      displayName: 'Verify Windows Agent'
+
+
+    # --------------------------------------------------------
+    # Verify Azure Subscription
+    # --------------------------------------------------------
     - task: AzureCLI@2
       displayName: 'Verify New Azure Subscription'
       inputs:
         azureSubscription: '$(azureServiceConnection)'
-        scriptType: 'bash'
+        scriptType: 'ps'
         scriptLocation: 'inlineScript'
         inlineScript: |
-          echo "======================================"
-          echo "Azure Account"
-          echo "======================================"
 
-          az account show \
-            --query "{Name:name, SubscriptionId:id, TenantId:tenantId}" \
+          Write-Host "======================================"
+          Write-Host "Azure Account"
+          Write-Host "======================================"
+
+          az account show `
+            --query "{Name:name, SubscriptionId:id, TenantId:tenantId}" `
             -o table
 
-          echo ""
-          echo "======================================"
-          echo "Azure CLI Version"
-          echo "======================================"
+          Write-Host ""
+
+          Write-Host "======================================"
+          Write-Host "Azure CLI Version"
+          Write-Host "======================================"
 
           az version
 
-          echo ""
-          echo "Azure subscription verification completed."
+          Write-Host ""
+          Write-Host "Azure subscription verification completed successfully."
 
 
 # ============================================================
@@ -112,47 +121,69 @@ stages:
 
     - checkout: self
 
-    - script: |
-        echo "======================================"
-        echo "Repository"
-        echo "======================================"
-        pwd
-        ls -la
+    # --------------------------------------------------------
+    # Verify Build Tools
+    # --------------------------------------------------------
+    - powershell: |
 
-        echo ""
-        echo "======================================"
-        echo "Python Version"
-        echo "======================================"
+        Write-Host "======================================"
+        Write-Host "Repository"
+        Write-Host "======================================"
 
-        python3 --version || true
+        Get-Location
+        Get-ChildItem
 
-        echo ""
-        echo "======================================"
-        echo "Docker Version"
-        echo "======================================"
+        Write-Host ""
+        Write-Host "======================================"
+        Write-Host "Python Version"
+        Write-Host "======================================"
 
-        docker --version || true
+        python --version
+
+        Write-Host ""
+        Write-Host "======================================"
+        Write-Host "Docker Version"
+        Write-Host "======================================"
+
+        docker --version
+
       displayName: 'Verify Build Tools'
 
-    - script: |
-        echo "======================================"
-        echo "Building Docker Image"
-        echo "======================================"
 
-        docker build \
-          -t $(acrLoginServer)/$(imageName):$(Build.BuildNumber) \
-          -t $(acrLoginServer)/$(imageName):latest \
+    # --------------------------------------------------------
+    # Build Docker Image
+    # --------------------------------------------------------
+    - powershell: |
+
+        Write-Host "======================================"
+        Write-Host "Building Docker Image"
+        Write-Host "======================================"
+
+        docker build `
+          -t "$(acrLoginServer)/$(imageName):$(Build.BuildNumber)" `
+          -t "$(acrLoginServer)/$(imageName):latest" `
           .
 
-        echo ""
-        echo "Docker image created successfully."
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Docker build failed."
+          exit 1
+        }
+
+        Write-Host ""
+        Write-Host "Docker image created successfully."
+
+        Write-Host ""
+        Write-Host "======================================"
+        Write-Host "Docker Images"
+        Write-Host "======================================"
 
         docker images
+
       displayName: 'Build Docker Image'
 
 
 # ============================================================
-# STAGE 3 - LOGIN TO NEW ACR
+# STAGE 3 - LOGIN AND PUSH TO NEW ACR
 # ============================================================
 - stage: Push
   displayName: 'Push Image to New ACR'
@@ -167,54 +198,82 @@ stages:
 
     - checkout: self
 
-    # AzureCLI automatically authenticates using
-    # the NEW service connection.
+    # --------------------------------------------------------
+    # Login to Azure and ACR
+    # --------------------------------------------------------
     - task: AzureCLI@2
       displayName: 'Login to New Azure Container Registry'
       inputs:
         azureSubscription: '$(azureServiceConnection)'
-        scriptType: 'bash'
+        scriptType: 'ps'
         scriptLocation: 'inlineScript'
         inlineScript: |
 
-          echo "======================================"
-          echo "Current Azure Subscription"
-          echo "======================================"
+          Write-Host "======================================"
+          Write-Host "Current Azure Subscription"
+          Write-Host "======================================"
 
-          az account show \
-            --query "{Name:name, SubscriptionId:id}" \
+          az account show `
+            --query "{Name:name, SubscriptionId:id, TenantId:tenantId}" `
             -o table
 
-          echo ""
-          echo "======================================"
-          echo "Logging into ACR"
-          echo "======================================"
+          Write-Host ""
+
+          Write-Host "======================================"
+          Write-Host "Logging into ACR"
+          Write-Host "======================================"
 
           az acr login --name "$(acrName)"
 
-          echo ""
-          echo "ACR login successful."
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "ACR login failed."
+            exit 1
+          }
+
+          Write-Host ""
+          Write-Host "ACR login successful."
 
 
-    - script: |
+    # --------------------------------------------------------
+    # Push Docker Images
+    # --------------------------------------------------------
+    - powershell: |
 
-        echo "======================================"
-        echo "Pushing Docker Images"
-        echo "======================================"
+        Write-Host "======================================"
+        Write-Host "Pushing Docker Images"
+        Write-Host "======================================"
 
-        docker push \
-          $(acrLoginServer)/$(imageName):$(Build.BuildNumber)
+        Write-Host ""
+        Write-Host "Pushing:"
+        Write-Host "$(acrLoginServer)/$(imageName):$(Build.BuildNumber)"
 
-        docker push \
-          $(acrLoginServer)/$(imageName):latest
+        docker push `
+          "$(acrLoginServer)/$(imageName):$(Build.BuildNumber)"
 
-        echo ""
-        echo "======================================"
-        echo "Images pushed successfully"
-        echo "======================================"
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Versioned Docker image push failed."
+          exit 1
+        }
 
-        echo "$(acrLoginServer)/$(imageName):$(Build.BuildNumber)"
-        echo "$(acrLoginServer)/$(imageName):latest"
+        Write-Host ""
+        Write-Host "Pushing:"
+        Write-Host "$(acrLoginServer)/$(imageName):latest"
+
+        docker push `
+          "$(acrLoginServer)/$(imageName):latest"
+
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Latest Docker image push failed."
+          exit 1
+        }
+
+        Write-Host ""
+        Write-Host "======================================"
+        Write-Host "Images pushed successfully"
+        Write-Host "======================================"
+
+        Write-Host "$(acrLoginServer)/$(imageName):$(Build.BuildNumber)"
+        Write-Host "$(acrLoginServer)/$(imageName):latest"
 
       displayName: 'Push Docker Image'
 
@@ -233,40 +292,55 @@ stages:
 
     steps:
 
+    # --------------------------------------------------------
+    # Verify ACR
+    # --------------------------------------------------------
     - task: AzureCLI@2
       displayName: 'Verify Image in New ACR'
       inputs:
         azureSubscription: '$(azureServiceConnection)'
-        scriptType: 'bash'
+        scriptType: 'ps'
         scriptLocation: 'inlineScript'
         inlineScript: |
 
-          echo "======================================"
-          echo "Azure Subscription"
-          echo "======================================"
+          Write-Host "======================================"
+          Write-Host "Azure Subscription"
+          Write-Host "======================================"
 
-          az account show \
-            --query "{Name:name, SubscriptionId:id}" \
+          az account show `
+            --query "{Name:name, SubscriptionId:id, TenantId:tenantId}" `
             -o table
 
-          echo ""
-          echo "======================================"
-          echo "ACR Repositories"
-          echo "======================================"
+          Write-Host ""
 
-          az acr repository list \
-            --name "$(acrName)" \
+          Write-Host "======================================"
+          Write-Host "ACR Repositories"
+          Write-Host "======================================"
+
+          az acr repository list `
+            --name "$(acrName)" `
             --output table
 
-          echo ""
-          echo "======================================"
-          echo "Image Tags"
-          echo "======================================"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Unable to list ACR repositories."
+            exit 1
+          }
 
-          az acr repository show-tags \
-            --name "$(acrName)" \
-            --repository "$(imageName)" \
+          Write-Host ""
+
+          Write-Host "======================================"
+          Write-Host "Image Tags"
+          Write-Host "======================================"
+
+          az acr repository show-tags `
+            --name "$(acrName)" `
+            --repository "$(imageName)" `
             --output table
 
-          echo ""
-          echo "ACR verification completed successfully."
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Unable to retrieve image tags."
+            exit 1
+          }
+
+          Write-Host ""
+          Write-Host "ACR verification completed successfully."
