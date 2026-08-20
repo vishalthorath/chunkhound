@@ -5,10 +5,59 @@ pool:
   name: batch13-pool
 
 variables:
+
+  # ==========================================================
+  # Azure
+  # ==========================================================
+
+  azureServiceConnection: 'batch13-connection'
+  resourceGroup: 'VT-RG'
+
+  # ==========================================================
+  # Azure Blob Storage
+  # ==========================================================
+
+  storageAccount: 'vishalsa007'
+  containerName: 'vishalcontainer'
+
+  # ==========================================================
+  # Azure Container Registry
+  # ==========================================================
+
+  acrName: 'vishalacr2026'
+  acrLoginServer: 'vishalacr2026.azurecr.io'
+
+  # ==========================================================
+  # ORAS
+  # ==========================================================
+
+  orasPath: 'C:\Users\Vishal.M.Thorath\oras\oras.exe'
+
+  # ==========================================================
+  # Artifact
+  # ==========================================================
+
   artifactName: 'application-artifact'
   artifactFile: 'application-artifact.tar.gz'
 
+  # ==========================================================
+  # ACR Repository
+  # ==========================================================
+
+  acrRepository: 'application-artifact'
+
+
+# ============================================================
+# STAGES
+# ============================================================
+
 stages:
+
+
+# ============================================================
+# STAGE 1
+# BUILD ARTIFACT
+# ============================================================
 
 - stage: Build
   displayName: 'Stage 1 - Build Artifact'
@@ -20,8 +69,17 @@ stages:
 
     steps:
 
+    # --------------------------------------------------------
+    # Checkout source
+    # --------------------------------------------------------
+
     - checkout: self
       displayName: 'Checkout Source Code'
+
+
+    # --------------------------------------------------------
+    # Display source files
+    # --------------------------------------------------------
 
     - powershell: |
 
@@ -29,14 +87,34 @@ stages:
         Write-Host "SOURCE CODE"
         Write-Host "=========================================="
 
-        Get-ChildItem "$(Build.SourcesDirectory)" -Force
+        Write-Host "Source directory:"
+        Write-Host "$(Build.SourcesDirectory)"
+
+        Get-ChildItem `
+          -Path "$(Build.SourcesDirectory)" `
+          -Force
+
+      displayName: 'Verify Source Code'
+
+
+    # --------------------------------------------------------
+    # Create artifact directory
+    # --------------------------------------------------------
 
     - powershell: |
 
         $artifactDirectory = "$(Build.ArtifactStagingDirectory)\artifact"
 
+        Write-Host "=========================================="
+        Write-Host "PREPARING ARTIFACT DIRECTORY"
+        Write-Host "=========================================="
+
         if (Test-Path $artifactDirectory) {
-            Remove-Item $artifactDirectory -Recurse -Force
+
+            Remove-Item `
+              $artifactDirectory `
+              -Recurse `
+              -Force
         }
 
         New-Item `
@@ -44,15 +122,24 @@ stages:
           -Path $artifactDirectory `
           -Force | Out-Null
 
-        Write-Host "Artifact directory created:"
+        Write-Host "Artifact directory:"
         Write-Host $artifactDirectory
+
+      displayName: 'Prepare Artifact Directory'
+
+
+    # --------------------------------------------------------
+    # Copy application
+    # --------------------------------------------------------
 
     - powershell: |
 
         $source = "$(Build.SourcesDirectory)"
         $destination = "$(Build.ArtifactStagingDirectory)\artifact"
 
-        Write-Host "Copying application files..."
+        Write-Host "=========================================="
+        Write-Host "COPYING APPLICATION"
+        Write-Host "=========================================="
 
         Get-ChildItem `
           -Path $source `
@@ -62,31 +149,64 @@ stages:
           -Recurse `
           -Force
 
-        Write-Host "Application files copied."
+        Write-Host "Application copied successfully."
+
+      displayName: 'Package Application'
+
+
+    # --------------------------------------------------------
+    # Create TAR.GZ
+    # --------------------------------------------------------
 
     - powershell: |
 
         $artifactDirectory = "$(Build.ArtifactStagingDirectory)\artifact"
+
         $outputFile = "$(Build.ArtifactStagingDirectory)\$(artifactFile)"
 
-        Write-Host "Creating TAR.GZ artifact..."
+        Write-Host "=========================================="
+        Write-Host "CREATING ARTIFACT"
+        Write-Host "=========================================="
 
-        tar.exe -czf "$outputFile" -C "$artifactDirectory" .
+        Write-Host "Input:"
+        Write-Host $artifactDirectory
+
+        Write-Host "Output:"
+        Write-Host $outputFile
+
+        if (Test-Path $outputFile) {
+
+            Remove-Item `
+              $outputFile `
+              -Force
+        }
+
+        tar.exe `
+          -czf "$outputFile" `
+          -C "$artifactDirectory" .
 
         if ($LASTEXITCODE -ne 0) {
+
             throw "Artifact creation failed."
         }
 
         if (-not (Test-Path $outputFile)) {
+
             throw "Artifact file was not created."
         }
 
-        Write-Host "=========================================="
-        Write-Host "ARTIFACT CREATED"
-        Write-Host "=========================================="
+        Write-Host ""
+        Write-Host "Artifact created successfully."
 
         Get-Item "$outputFile" |
           Select-Object FullName, Length
+
+      displayName: 'Create TAR.GZ Artifact'
+
+
+    # --------------------------------------------------------
+    # Publish pipeline artifact
+    # --------------------------------------------------------
 
     - task: PublishPipelineArtifact@1
       displayName: 'Publish Build Artifact'
@@ -94,3 +214,536 @@ stages:
         targetPath: '$(Build.ArtifactStagingDirectory)\$(artifactFile)'
         artifact: '$(artifactName)'
         publishLocation: 'pipeline'
+
+
+
+# ============================================================
+# STAGE 2
+# UPLOAD ARTIFACT TO AZURE BLOB STORAGE
+# ============================================================
+
+- stage: UploadToBlob
+  displayName: 'Stage 2 - Upload Artifact to Azure Blob Storage'
+
+  dependsOn:
+  - Build
+
+  condition: succeeded()
+
+  jobs:
+
+  - job: UploadBlob
+    displayName: 'Upload Artifact to Blob Storage'
+
+    steps:
+
+    # --------------------------------------------------------
+    # Download pipeline artifact
+    # --------------------------------------------------------
+
+    - task: DownloadPipelineArtifact@2
+      displayName: 'Download Build Artifact'
+      inputs:
+        artifact: '$(artifactName)'
+        path: '$(Pipeline.Workspace)\artifact'
+
+
+    # --------------------------------------------------------
+    # Verify artifact
+    # --------------------------------------------------------
+
+    - powershell: |
+
+        $artifact = "$(Pipeline.Workspace)\artifact\$(artifactFile)"
+
+        Write-Host "=========================================="
+        Write-Host "VERIFYING ARTIFACT"
+        Write-Host "=========================================="
+
+        if (-not (Test-Path $artifact)) {
+
+            throw "Artifact not found: $artifact"
+        }
+
+        Get-Item "$artifact" |
+          Select-Object FullName, Length
+
+      displayName: 'Verify Downloaded Artifact'
+
+
+    # --------------------------------------------------------
+    # Upload to Azure Blob Storage
+    # --------------------------------------------------------
+
+    - task: AzureCLI@2
+      displayName: 'Upload Artifact to Azure Blob Storage'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'ps'
+        scriptLocation: 'inlineScript'
+
+        inlineScript: |
+
+          $ErrorActionPreference = "Stop"
+
+          $storageAccount = "$(storageAccount)"
+          $containerName = "$(containerName)"
+
+          $artifact = "$(Pipeline.Workspace)\artifact\$(artifactFile)"
+
+          Write-Host "=========================================="
+          Write-Host "AZURE BLOB STORAGE UPLOAD"
+          Write-Host "=========================================="
+
+          Write-Host "Storage Account:"
+          Write-Host $storageAccount
+
+          Write-Host "Container:"
+          Write-Host $containerName
+
+          Write-Host "Artifact:"
+          Write-Host $artifact
+
+
+          # --------------------------------------------------
+          # Verify Azure login
+          # --------------------------------------------------
+
+          Write-Host ""
+          Write-Host "Checking Azure authentication..."
+
+          az account show -o table
+
+          if ($LASTEXITCODE -ne 0) {
+
+              throw "Azure authentication failed."
+          }
+
+
+          # --------------------------------------------------
+          # Verify artifact
+          # --------------------------------------------------
+
+          if (-not (Test-Path $artifact)) {
+
+              throw "Artifact not found."
+          }
+
+
+          # --------------------------------------------------
+          # Create versioned blob name
+          # --------------------------------------------------
+
+          $version = "$(Build.BuildNumber)"
+
+          $version = $version -replace `
+            '[^a-zA-Z0-9._-]', '-'
+
+          $blobName = "releases/$version/$(artifactFile)"
+
+
+          Write-Host ""
+          Write-Host "Blob Name:"
+          Write-Host $blobName
+
+
+          # --------------------------------------------------
+          # Upload
+          # --------------------------------------------------
+
+          Write-Host ""
+          Write-Host "Uploading artifact..."
+
+          az storage blob upload `
+            --account-name $storageAccount `
+            --container-name $containerName `
+            --name $blobName `
+            --file $artifact `
+            --auth-mode login `
+            --overwrite true
+
+          if ($LASTEXITCODE -ne 0) {
+
+              throw "Blob upload failed."
+          }
+
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "BLOB UPLOAD SUCCESSFUL"
+          Write-Host "=========================================="
+
+          Write-Host "Storage Account:"
+          Write-Host $storageAccount
+
+          Write-Host "Container:"
+          Write-Host $containerName
+
+          Write-Host "Blob:"
+          Write-Host $blobName
+
+
+
+# ============================================================
+# STAGE 3
+# PUSH ARTIFACT TO AZURE CONTAINER REGISTRY
+# ============================================================
+
+- stage: PushToACR
+  displayName: 'Stage 3 - Push Artifact to Azure Container Registry'
+
+  dependsOn:
+  - UploadToBlob
+
+  condition: succeeded()
+
+  jobs:
+
+  - job: PushArtifact
+    displayName: 'Push Artifact Using ORAS'
+
+    steps:
+
+    # --------------------------------------------------------
+    # Download pipeline artifact
+    # --------------------------------------------------------
+
+    - task: DownloadPipelineArtifact@2
+      displayName: 'Download Build Artifact'
+      inputs:
+        artifact: '$(artifactName)'
+        path: '$(Pipeline.Workspace)\artifact'
+
+
+    # --------------------------------------------------------
+    # Verify ORAS
+    # --------------------------------------------------------
+
+    - powershell: |
+
+        $oras = "$(orasPath)"
+
+        Write-Host "=========================================="
+        Write-Host "CHECKING ORAS"
+        Write-Host "=========================================="
+
+        Write-Host "ORAS path:"
+        Write-Host $oras
+
+        if (-not (Test-Path $oras)) {
+
+            throw "ORAS executable not found at: $oras"
+        }
+
+        & $oras version
+
+        if ($LASTEXITCODE -ne 0) {
+
+            throw "ORAS version check failed."
+        }
+
+      displayName: 'Verify ORAS'
+
+
+    # --------------------------------------------------------
+    # Azure CLI + ORAS login
+    # --------------------------------------------------------
+
+    - task: AzureCLI@2
+      displayName: 'Login to ACR Using ORAS'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'ps'
+        scriptLocation: 'inlineScript'
+
+        inlineScript: |
+
+          $ErrorActionPreference = "Stop"
+
+          $acrName = "$(acrName)"
+          $acrLoginServer = "$(acrLoginServer)"
+          $oras = "$(orasPath)"
+
+
+          Write-Host "=========================================="
+          Write-Host "AZURE ACCOUNT"
+          Write-Host "=========================================="
+
+          az account show -o table
+
+          if ($LASTEXITCODE -ne 0) {
+
+              throw "Azure authentication failed."
+          }
+
+
+          # --------------------------------------------------
+          # Check ACR
+          # --------------------------------------------------
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "CHECKING ACR"
+          Write-Host "=========================================="
+
+          az acr show `
+            --name $acrName `
+            --resource-group "$(resourceGroup)" `
+            --query "{Name:name,LoginServer:loginServer,Sku:sku.name}" `
+            -o table
+
+          if ($LASTEXITCODE -ne 0) {
+
+              throw "Unable to access ACR."
+          }
+
+
+          # --------------------------------------------------
+          # Get ACR refresh token
+          # --------------------------------------------------
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "GETTING ACR REFRESH TOKEN"
+          Write-Host "=========================================="
+
+          $tokenJson = az acr login `
+            --name $acrName `
+            --expose-token `
+            --output json
+
+          if ($LASTEXITCODE -ne 0) {
+
+              throw "Failed to obtain ACR token."
+          }
+
+          $token = $tokenJson | ConvertFrom-Json
+
+          if (-not $token.refreshToken) {
+
+              throw "ACR refresh token was not returned."
+          }
+
+          Write-Host "ACR refresh token obtained successfully."
+
+
+          # --------------------------------------------------
+          # ORAS Login
+          # --------------------------------------------------
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "ORAS LOGIN"
+          Write-Host "=========================================="
+
+          $username = "00000000-0000-0000-0000-000000000000"
+
+          & $oras login `
+            $acrLoginServer `
+            --username $username `
+            --password $token.refreshToken
+
+          if ($LASTEXITCODE -ne 0) {
+
+              throw "ORAS ACR login failed."
+          }
+
+          Write-Host ""
+          Write-Host "ORAS login successful."
+
+
+
+    # --------------------------------------------------------
+    # Push artifact
+    # --------------------------------------------------------
+
+    - task: AzureCLI@2
+      displayName: 'Push Artifact to Azure Container Registry'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'ps'
+        scriptLocation: 'inlineScript'
+
+        inlineScript: |
+
+          $ErrorActionPreference = "Stop"
+
+          $oras = "$(orasPath)"
+
+          $acrLoginServer = "$(acrLoginServer)"
+
+          $repository = "$(acrRepository)"
+
+          $artifact = "$(Pipeline.Workspace)\artifact\$(artifactFile)"
+
+
+          # --------------------------------------------------
+          # Create version
+          # --------------------------------------------------
+
+          $version = "$(Build.BuildNumber)"
+
+          $version = $version -replace `
+            '[^a-zA-Z0-9._-]', '-'
+
+
+          # --------------------------------------------------
+          # Verify artifact
+          # --------------------------------------------------
+
+          Write-Host "=========================================="
+          Write-Host "ARTIFACT"
+          Write-Host "=========================================="
+
+          Write-Host "Artifact:"
+          Write-Host $artifact
+
+          if (-not (Test-Path $artifact)) {
+
+              throw "Artifact does not exist."
+          }
+
+          Get-Item "$artifact" |
+            Select-Object FullName, Length
+
+
+          # --------------------------------------------------
+          # Create ORAS target
+          # --------------------------------------------------
+
+          $target = "$acrLoginServer/$repository`:$version"
+
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "ORAS PUSH"
+          Write-Host "=========================================="
+
+          Write-Host "Registry:"
+          Write-Host $acrLoginServer
+
+          Write-Host "Repository:"
+          Write-Host $repository
+
+          Write-Host "Version:"
+          Write-Host $version
+
+          Write-Host "Target:"
+          Write-Host $target
+
+
+          # --------------------------------------------------
+          # Push artifact
+          # --------------------------------------------------
+
+          & $oras push `
+            "$target" `
+            "$artifact:application/gzip"
+
+          if ($LASTEXITCODE -ne 0) {
+
+              throw "ORAS artifact push failed."
+          }
+
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "ACR PUSH SUCCESSFUL"
+          Write-Host "=========================================="
+
+          Write-Host "Artifact:"
+          Write-Host $target
+
+
+
+# ============================================================
+# STAGE 4
+# VERIFY ACR
+# ============================================================
+
+- stage: VerifyACR
+  displayName: 'Stage 4 - Verify Artifact in ACR'
+
+  dependsOn:
+  - PushToACR
+
+  condition: succeeded()
+
+  jobs:
+
+  - job: VerifyArtifact
+    displayName: 'Verify Artifact in ACR'
+
+    steps:
+
+    # --------------------------------------------------------
+    # Verify repository
+    # --------------------------------------------------------
+
+    - task: AzureCLI@2
+      displayName: 'Verify ACR Repository'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'ps'
+        scriptLocation: 'inlineScript'
+
+        inlineScript: |
+
+          $ErrorActionPreference = "Stop"
+
+          $acrName = "$(acrName)"
+
+          $repository = "$(acrRepository)"
+
+
+          Write-Host "=========================================="
+          Write-Host "VERIFYING ACR REPOSITORY"
+          Write-Host "=========================================="
+
+          az acr repository show `
+            --name $acrName `
+            --repository $repository `
+            -o table
+
+          if ($LASTEXITCODE -ne 0) {
+
+              throw "ACR repository verification failed."
+          }
+
+
+          # --------------------------------------------------
+          # List tags
+          # --------------------------------------------------
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "ACR TAGS"
+          Write-Host "=========================================="
+
+          az acr repository show-tags `
+            --name $acrName `
+            --repository $repository `
+            --output table
+
+          if ($LASTEXITCODE -ne 0) {
+
+              throw "Unable to list ACR tags."
+          }
+
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "PIPELINE COMPLETED SUCCESSFULLY"
+          Write-Host "=========================================="
+
+          Write-Host ""
+          Write-Host "Blob Storage:"
+          Write-Host "$(storageAccount)/$(containerName)"
+
+          Write-Host ""
+          Write-Host "ACR:"
+          Write-Host "$(acrLoginServer)/$(acrRepository)"
+
+          Write-Host ""
+          Write-Host "Build:"
+          Write-Host "$(Build.BuildNumber)"
